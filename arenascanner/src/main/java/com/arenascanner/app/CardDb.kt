@@ -46,7 +46,8 @@ object CardDb {
             for (i in 0 until data.length()) out.add(parse(data.getJSONObject(i)))
             progress(out.size)
             url = if (page.optBoolean("has_more")) page.getString("next_page") else null
-            if (url != null) Thread.sleep(120) // Scryfall asks for 50–100 ms between requests.
+            // Scryfall limits search requests to about 2 per second.
+            if (url != null) Thread.sleep(600)
         }
         val arr = JSONArray()
         for (c in out) arr.put(JSONObject().put("name", c.name).put("rarity", c.rarity).put("faces", JSONArray(c.faces)))
@@ -68,12 +69,26 @@ object CardDb {
         "common" -> "C"; "uncommon" -> "U"; "rare" -> "R"; "mythic" -> "M"; else -> "?"
     }
 
+    /** Fetches a page, waiting and retrying when Scryfall says "too many requests" (429). */
     private fun getJson(url: String): JSONObject {
+        var wait = 2000L
+        repeat(5) {
+            try { return getOnce(url) } catch (e: RateLimited) {
+                Thread.sleep(maxOf(wait, e.retryAfterMs)); wait *= 2
+            }
+        }
+        throw IllegalStateException("Scryfall is busy right now. Wait a minute and tap Download card list again.")
+    }
+
+    private class RateLimited(val retryAfterMs: Long) : Exception()
+
+    private fun getOnce(url: String): JSONObject {
         val c = URL(url).openConnection() as HttpURLConnection
         c.setRequestProperty("User-Agent", "ArenaScanner/1.0 (personal collection app)")
         c.setRequestProperty("Accept", "application/json")
         c.connectTimeout = 15000; c.readTimeout = 30000
         try {
+            if (c.responseCode == 429) throw RateLimited((c.getHeaderField("Retry-After")?.toLongOrNull() ?: 0) * 1000)
             if (c.responseCode != 200) throw IllegalStateException("Scryfall answered ${c.responseCode}")
             return JSONObject(c.inputStream.bufferedReader().readText())
         } finally { c.disconnect() }

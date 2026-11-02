@@ -98,16 +98,21 @@ class MainActivity : Activity() {
         summary.text = "Your collection: ${adapter.items.size} cards, $copies copies"
     }
 
+    private var downloading = false
+
     private fun downloadCards() {
+        if (downloading) return // one download at a time, or Scryfall rate-limits us
+        downloading = true
         dbButton.isEnabled = false
         status.text = "Downloading Standard card list…"
         io.execute {
             try {
-                val cards = CardDb.download(this) { n -> runOnUiThread { status.text = "Downloading Standard card list… $n cards" } }
-                runOnUiThread { status.text = "Card list ready: ${cards.size} Standard cards."; dbButton.isEnabled = true; refresh() }
+                val cards = CardDb.download(this) { n -> runOnUiThread { status.text = "Downloading Standard card list… $n cards (takes about 30 seconds)" } }
+                runOnUiThread { downloading = false; status.text = "Card list ready: ${cards.size} Standard cards."; dbButton.isEnabled = true; refresh() }
             } catch (e: Exception) {
                 runOnUiThread {
-                    status.text = "Couldn't download the card list (${e.message}). Check your internet connection and try again."
+                    downloading = false
+                    status.text = "Couldn't download the card list: ${e.message}"
                     dbButton.isEnabled = true
                 }
             }
@@ -122,7 +127,7 @@ class MainActivity : Activity() {
         }
         if (!CardDb.isReady(this)) {
             toast("Getting the card list first. Tap Start scanning again when it says ready.")
-            if (dbButton.isEnabled) downloadCards()
+            downloadCards()
             return
         }
         if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
