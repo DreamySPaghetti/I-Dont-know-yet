@@ -25,6 +25,15 @@ import java.net.URL
 
 private const val REPO = "DreamySPaghetti/I-Dont-know-yet"
 
+object UpdateTrigger {
+    var n by androidx.compose.runtime.mutableIntStateOf(0)
+    var manual = false
+    fun check() {
+        manual = true
+        n++
+    }
+}
+
 private fun latestVersion(): Int? = runCatching {
     val json = URL("https://api.github.com/repos/$REPO/releases/latest").readText()
     JSONObject(json).getString("tag_name").removePrefix("v").toInt()
@@ -54,9 +63,13 @@ fun UpdateCheck(store: Store) {
     var newer by remember { mutableStateOf<Int?>(null) }
     var busy by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(UpdateTrigger.n) {
         val v = withContext(Dispatchers.IO) { latestVersion() }
         if (v != null && v > BuildConfig.VERSION_CODE) newer = v
+        else if (UpdateTrigger.manual) {
+            android.widget.Toast.makeText(ctx, if (v == null) "Couldn't check for updates" else "You're on the latest version", android.widget.Toast.LENGTH_SHORT).show()
+        }
+        UpdateTrigger.manual = false
     }
     val v = newer ?: return
     AlertDialog(

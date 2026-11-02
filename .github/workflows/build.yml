@@ -17,7 +17,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
-      - run: gradle assembleDebug
+      - run: |
+          set -o pipefail
+          gradle assembleDebug 2>&1 | tee build.log
+      - name: Save build log on failure
+        if: failure()
+        run: |
+          git config user.name ci && git config user.email ci@users.noreply.github.com
+          cp build.log /tmp/build.log
+          git checkout --orphan ci-log && git rm -rfq --cached . && cp /tmp/build.log build.log
+          git add -f build.log && git commit -qm log && git push -f origin ci-log
       - run: cp app/build/outputs/apk/debug/app-debug.apk Inkwell.apk
       - uses: actions/upload-artifact@v4
         with:
