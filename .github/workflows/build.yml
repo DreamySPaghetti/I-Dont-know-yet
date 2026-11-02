@@ -27,14 +27,20 @@ jobs:
           cp build.log /tmp/build.log
           git checkout --orphan ci-log && git rm -rfq --cached . && cp /tmp/build.log build.log
           git add -f build.log && git commit -qm log && git push -f origin ci-log
-      - run: cp app/build/outputs/apk/debug/app-debug.apk SmartCam.apk
+      - run: |
+          cp app/build/outputs/apk/debug/app-debug.apk SmartCam.apk
+          cp arenascanner/build/outputs/apk/debug/arenascanner-debug.apk ArenaScanner.apk
       - uses: actions/upload-artifact@v4
         with:
           name: SmartCam.apk
           path: SmartCam.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArenaScanner.apk
+          path: ArenaScanner.apk
       - name: Publish latest release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest -y --cleanup-tag || true
-          gh release create "v${{ github.run_number }}" SmartCam.apk --latest --title "SmartCam 1.${{ github.run_number }}" --notes "Download SmartCam.apk on your Android phone and open it to install. No ads."
+          gh release create "v${{ github.run_number }}" SmartCam.apk ArenaScanner.apk --latest --title "SmartCam + Arena Scanner 1.${{ github.run_number }}" --notes "Download SmartCam.apk or ArenaScanner.apk on your Android phone and open it to install. No ads."

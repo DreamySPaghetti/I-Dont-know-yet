@@ -7,3 +7,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "SmartCam"
 include(":app")
+include(":arenascanner")
