@@ -19,7 +19,7 @@ jobs:
           gradle-version: "8.10.2"
       - run: |
           set -o pipefail
-          gradle assembleDebug 2>&1 | tee build.log
+          gradle testDebugUnitTest assembleDebug 2>&1 | tee build.log
       - name: Save build log on failure
         if: failure()
         run: |

@@ -1,9 +1,13 @@
 # Ant Trail
 
-An ad-free colour-sorting puzzle. Tap a cube in the tray to move it into a waiting slot; its ants march out of the nest, pick up tiles of that colour from the pixel picture and carry them home, counting the cube down. Ants can only reach tiles that touch open ground, and there are only 5 slots, so the order you send cubes in matters. Clear every tile to reveal the picture.
+An ad-free colour-sorting puzzle for Android, written natively in Kotlin.
 
-- The whole game is one file: `app/src/main/assets/index.html`. Open it in any browser to play, or install the Android build below.
-- Press **D** (or Settings → Debug view) to see reachable tiles and the solver's answer.
+Tap a cube in the tray to move it into a waiting slot. Its ants march out of the nest along trails through open ground, carry tiles of that colour home, and count the cube down. Ants can only reach tiles touching open ground, and there are only 5 slots, so the order you send cubes in matters. Clear every tile to reveal the picture.
+
+- `Logic.kt` is pure Kotlin: board, level generator, solver, difficulty measurement and the real-time engine.
+- `GameView.kt` draws the board, ants, slots and tray on a native Canvas. `MainActivity.kt` is the Compose UI.
+- `app/src/test/.../Harness.kt` is the self-test. CI runs it on every push (`gradle testDebugUnitTest`).
+- Settings → Debug view shows reachable tiles and the solver's answer.
 
 ## Install on your phone
 
