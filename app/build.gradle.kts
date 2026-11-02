@@ -11,10 +11,25 @@ android {
         applicationId = "com.inkwell.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        val run = System.getenv("GITHUB_RUN_NUMBER")?.toInt() ?: 1
+        versionCode = run
+        versionName = "1.$run"
     }
-    buildFeatures { compose = true }
+    signingConfigs {
+        create("inkwell") {
+            storeFile = file("inkwell.jks")
+            storePassword = "12b2e82bab05c11877f9cea4"
+            keyAlias = "inkwell"
+            keyPassword = "12b2e82bab05c11877f9cea4"
+        }
+    }
+    buildTypes {
+        getByName("debug") { signingConfig = signingConfigs.getByName("inkwell") }
+    }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

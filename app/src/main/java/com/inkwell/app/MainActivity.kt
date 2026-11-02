@@ -97,6 +97,7 @@ sealed interface Screen {
 @Composable
 fun App(store: Store) {
     var screen by remember { mutableStateOf<Screen>(Screen.Groups) }
+    UpdateCheck(store)
     when (val s = screen) {
         Screen.Groups -> GroupsScreen(store) { screen = Screen.Sheets(it) }
         is Screen.Sheets -> {
