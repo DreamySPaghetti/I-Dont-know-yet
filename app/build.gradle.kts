@@ -13,6 +13,8 @@ android {
         val run = System.getenv("GITHUB_RUN_NUMBER")?.toInt() ?: 1
         versionCode = run
         versionName = "1.$run"
+        // Modern phones (incl. Galaxy S26) are 64-bit ARM; skipping other CPUs' ML Kit libraries shrinks the APK.
+        ndk { abiFilters += "arm64-v8a" }
     }
     signingConfigs {
         create("smartcam") {
