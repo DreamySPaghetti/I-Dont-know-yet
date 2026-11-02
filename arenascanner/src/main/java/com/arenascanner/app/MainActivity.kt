@@ -16,6 +16,7 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.LinearLayout
@@ -48,6 +49,15 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         val pad = (16 * dp).toInt()
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, 0) }
+        // Android 15 draws apps edge to edge, so pad the content clear of the status and navigation bars.
+        root.setOnApplyWindowInsetsListener { v, insets ->
+            val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+            v.setPadding(pad + bars.left, pad + bars.top, pad + bars.right, bars.bottom)
+            insets
+        }
+        val heading = TextView(this).apply {
+            text = "Arena Scanner"; textSize = 24f; setTypeface(typeface, Typeface.BOLD); setPadding(0, 0, 0, pad / 2)
+        }
 
         status = TextView(this).apply { textSize = 14f }
         dbButton = Button(this).apply { setOnClickListener { downloadCards() } }
@@ -64,7 +74,7 @@ class MainActivity : Activity() {
         summary = TextView(this).apply { textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, pad / 2) }
         val list = ListView(this).apply { adapter = this@MainActivity.adapter }
 
-        for (v in listOf(status, dbButton, scanButton, exportButton, clearButton, help, summary)) root.addView(v)
+        for (v in listOf(heading, status, dbButton, scanButton, exportButton, clearButton, help, summary)) root.addView(v)
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         title = "Arena Scanner"
@@ -110,7 +120,11 @@ class MainActivity : Activity() {
             scanButton.postDelayed({ refresh() }, 300)
             return
         }
-        if (!CardDb.isReady(this)) { toast("Download the card list first."); return }
+        if (!CardDb.isReady(this)) {
+            toast("Getting the card list first. Tap Start scanning again when it says ready.")
+            if (dbButton.isEnabled) downloadCards()
+            return
+        }
         if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
             return
