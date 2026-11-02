@@ -592,7 +592,9 @@ open class CubeDef(val id: Int, val color: Int, val cap: Int, var hidden: Boolea
 
 class Level(
     val L: Int, val tag: String, val name: String, val W: Int, val H: Int, val grid: IntArray,
-    val palette: List<String>, val nests: List<Pt>, val cols: List<List<CubeDef>>, val solution: List<Int>?, val hint: String?
+    val palette: List<String>, val nests: List<Pt>, val cols: List<List<CubeDef>>, val solution: List<Int>?, val hint: String?,
+    /** Id of a player-made puzzle, null for campaign levels. */
+    val custom: String? = null
 )
 
 fun splitCubes(a: Art, L: Int, split: Set<Int>, r: Rng, small: Boolean = false): List<Pair<Int, Int>> {
@@ -841,6 +843,45 @@ fun genLevel(L: Int): Level {
     return lv
 }
 
+/** Searches deals for one finished picture and keeps the one closest to [band]. */
+private fun searchDeals(
+    art: Art, split: Set<Int>, L: Int, tag: String, band: Band, nCols: Int, r: Rng, name: String,
+    startNodes: Long, budget: Long, bestIn: Cand?
+): Cand? {
+    var best = bestIn
+    val cubes = splitCubes(art, L, split, r, band.minMin >= 5)
+    val cd = colorDepths(art).cd
+    val nests = nestsFor(art.W, art.H, L)
+    val board = Board(art.W, art.H, art.grid, art.pal.size, nests)
+    var p = if (band.minMin >= 5) .55 else if (band.minMin == 4) .35 else .1
+    for (d in 0 until 300) {
+        if (SolverStats.nodes - startNodes > budget && best != null) break
+        val cols = depthDeal(cubes, cd, split, nCols, r, (p + (r.next() - .5) * .16).coerceIn(0.0, 1.0))
+        applySpecials(cols, L, r)
+        var naive = 0.0
+        if (band.naiveMax < 1.0) {
+            val first = naiveRate(board, cols, 5, L * 131 + d)
+            naive = if (first - band.naiveMax > .45) first else (first * 5 + naiveRate(board, cols, 15, L * 137 + d) * 15) / 20
+        }
+        val naivePen = max(0.0, naive - band.naiveMax) * 2
+        if (best != null && naivePen >= best.score) continue
+        val sol = solveLevel(board, cols, 5, GEN_NODES * 3)
+        if (sol == null) { p = max(0.0, p - .06); continue }
+        var slotPen = 0.0
+        if (band.maxMin <= 4 && solveLevel(board, cols, 4, GEN_NODES) == null) { slotPen += 1.0; p = max(0.0, p - .04) }
+        if (band.minMin >= 5 && solveLevel(board, cols, 4, GEN_NODES) != null) {
+            slotPen += if (solveLevel(board, cols, 3, GEN_NODES / 2) != null) 1.0 else .6; p = min(1.0, p + .05)
+        }
+        if (band.minMin == 4 && solveLevel(board, cols, 3, GEN_NODES) != null) { slotPen += .6; p = min(1.0, p + .04) }
+        if (naivePen > 0) p = min(1.0, p + .03)
+        val decoyPen = if (tag != "Normal" && !hasDecoy(board, cols, sol.path)) .3 else 0.0
+        val score = naivePen + slotPen + decoyPen
+        if (best == null || score < best.score) best = Cand(cols, sol.path, score, art, name, nests)
+        if (score == 0.0) break
+    }
+    return best
+}
+
 private fun generate(L: Int): Level {
     val r = Rng(L * 9973 + 7)
     val tag = difficulty(L)
@@ -854,46 +895,108 @@ private fun generate(L: Int): Level {
     var arts = 0
     for (attempt in 0 until 40) {
         val maxArts = if (band.minMin >= 4) 6 else 3
-        if (best != null && (best.score == 0.0 || arts >= maxArts || SolverStats.nodes - startNodes > budget)) break
+        val bb = best
+        if (bb != null && (bb.score == 0.0 || arts >= maxArts || SolverStats.nodes - startNodes > budget)) break
         val theme = THEMES[(L * 7 + attempt) % THEMES.size]
         val ao = buildArt(theme, SS, L, tag, r) ?: continue
         val art = ao.art
         if (art.pal.size < colorRange(L, tag).first && attempt < 30) continue
         if (art.grid.count { it >= 0 } < 15) continue
         arts++
-        val cubes = splitCubes(art, L, ao.split, r, band.minMin >= 5)
-        val cd = colorDepths(art).cd
-        val nests = nestsFor(art.W, art.H, L)
-        val board = Board(art.W, art.H, art.grid, art.pal.size, nests)
-        var p = if (band.minMin >= 5) .55 else if (band.minMin == 4) .35 else .1
-        for (d in 0 until 300) {
-            if (SolverStats.nodes - startNodes > budget && best != null) break
-            val cols = depthDeal(cubes, cd, ao.split, nCols, r, (p + (r.next() - .5) * .16).coerceIn(0.0, 1.0))
-            applySpecials(cols, L, r)
-            var naive = 0.0
-            if (band.naiveMax < 1.0) {
-                val first = naiveRate(board, cols, 5, L * 131 + d)
-                naive = if (first - band.naiveMax > .45) first else (first * 5 + naiveRate(board, cols, 15, L * 137 + d) * 15) / 20
-            }
-            val naivePen = max(0.0, naive - band.naiveMax) * 2
-            if (best != null && naivePen >= best.score) continue
-            val sol = solveLevel(board, cols, 5, GEN_NODES * 3)
-            if (sol == null) { p = max(0.0, p - .06); continue }
-            var slotPen = 0.0
-            if (band.maxMin <= 4 && solveLevel(board, cols, 4, GEN_NODES) == null) { slotPen += 1.0; p = max(0.0, p - .04) }
-            if (band.minMin >= 5 && solveLevel(board, cols, 4, GEN_NODES) != null) {
-                slotPen += if (solveLevel(board, cols, 3, GEN_NODES / 2) != null) 1.0 else .6; p = min(1.0, p + .05)
-            }
-            if (band.minMin == 4 && solveLevel(board, cols, 3, GEN_NODES) != null) { slotPen += .6; p = min(1.0, p + .04) }
-            if (naivePen > 0) p = min(1.0, p + .03)
-            val decoyPen = if (tag != "Normal" && !hasDecoy(board, cols, sol.path)) .3 else 0.0
-            val score = naivePen + slotPen + decoyPen
-            if (best == null || score < best.score) best = Cand(cols, sol.path, score, art, theme.name, nests)
-            if (score == 0.0) break
-        }
+        best = searchDeals(art, ao.split, L, tag, band, nCols, r, theme.name, startNodes, budget, best)
     }
     val b = best ?: return tutorialLevel(1)
     return Level(L, tag, b.theme, b.art.W, b.art.H, b.art.grid, b.art.pal.toList(), b.nests, b.cols, b.sol, levelHint(L))
+}
+
+// ---------------- player pictures ----------------
+/** k-means colour quantisation in Lab space (deterministic). Pixels with alpha < 128 come back as -1. */
+fun quantize(argb: IntArray, k: Int, seed: Int): Pair<IntArray, MutableList<String>> {
+    val r = Rng(seed)
+    val idx = argb.indices.filter { (argb[it] ushr 24) >= 128 }
+    val out = IntArray(argb.size) { -1 }
+    if (idx.isEmpty()) return out to mutableListOf()
+    fun hex(c: Int) = "#%06x".format(c and 0xffffff)
+    val labs = idx.map { lab(hex(argb[it])) }
+    val kk = min(k, labs.size)
+    val cent = ArrayList<DoubleArray>()
+    cent.add(labs[r.int(labs.size)].copyOf())
+    val dist = DoubleArray(labs.size) { Double.MAX_VALUE }
+    fun d2(a: DoubleArray, b: DoubleArray) = (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2])
+    while (cent.size < kk) {
+        var sum = 0.0
+        for (i in labs.indices) { dist[i] = min(dist[i], d2(labs[i], cent.last())); sum += dist[i] }
+        if (sum <= 0) break
+        var t = r.next() * sum; var pick = labs.size - 1
+        for (i in labs.indices) { t -= dist[i]; if (t <= 0) { pick = i; break } }
+        cent.add(labs[pick].copyOf())
+    }
+    val asg = IntArray(labs.size)
+    repeat(14) {
+        for (i in labs.indices) { var b = 0; var bd = Double.MAX_VALUE; for (c in cent.indices) { val d = d2(labs[i], cent[c]); if (d < bd) { bd = d; b = c } }; asg[i] = b }
+        val sum = Array(cent.size) { DoubleArray(4) }
+        for (i in labs.indices) { val s = sum[asg[i]]; s[0] += labs[i][0]; s[1] += labs[i][1]; s[2] += labs[i][2]; s[3]++ }
+        for (c in cent.indices) if (sum[c][3] > 0) cent[c] = doubleArrayOf(sum[c][0] / sum[c][3], sum[c][1] / sum[c][3], sum[c][2] / sum[c][3])
+    }
+    // each cluster is shown with the average real colour of its pixels
+    val rgb = Array(cent.size) { LongArray(4) }
+    for ((j, i) in idx.withIndex()) { val c = argb[i]; val s = rgb[asg[j]]; s[0] += (c shr 16 and 255).toLong(); s[1] += (c shr 8 and 255).toLong(); s[2] += (c and 255).toLong(); s[3]++ }
+    val pal = mutableListOf<String>()
+    val map = IntArray(cent.size) { -1 }
+    for (c in cent.indices) if (rgb[c][3] > 0) { map[c] = pal.size; pal.add("#%02x%02x%02x".format(rgb[c][0] / rgb[c][3], rgb[c][1] / rgb[c][3], rgb[c][2] / rgb[c][3])) }
+    for ((j, i) in idx.withIndex()) out[i] = map[asg[j]]
+    return out to pal
+}
+
+/** Turns a downscaled picture into a pixel map ready to play (colours merged, distinct, multiples of 5). */
+fun pixelArt(argb: IntArray, w: Int, h: Int, colors: Int, depthLimit: Int, seed: Int, name: String, frame: Int = 0): Art? {
+    val (grid, pal) = quantize(argb, colors, seed)
+    if (pal.isEmpty()) return null
+    var a = Art(w, h, grid, pal, name)
+    if (frame > 0) {
+        // a picture-frame border buries the whole photo one layer deeper per ring
+        val fw = w + 2 * frame; val fh = h + 2 * frame
+        val g2 = IntArray(fw * fh) { -1 }
+        for (y in 0 until h) for (x in 0 until w) g2[(y + frame) * fw + x + frame] = grid[y * w + x]
+        a = Art(fw, fh, g2, pal, name)
+        val frames = listOf("#5b4636", "#2f3e46", "#7d5ba6")
+        for (k in 0 until frame) {
+            val hex = frames.firstOrNull { c -> a.pal.all { deltaE(c, it) >= 20 } } ?: frames[k]
+            val ci = a.pal.size; a.pal.add(hex)
+            for (i in g2.indices) { val x = i % fw; val y = i / fw; if (min(min(x, y), min(fw - 1 - x, fh - 1 - y)) == k) g2[i] = ci }
+        }
+    }
+    if (a.grid.any { it < 0 }) fillBackground(a, 1, Rng(seed))
+    mergeSmall(a, max(5, w * h / 120))
+    makeDistinct(a)
+    capColors(a, colors + frame)
+    reduceDepth(a, depthLimit)
+    mergeSmall(a, 5)
+    makeDistinct(a)
+    fix5(a, Rng(seed + 1))
+    if (a.pal.isEmpty() || a.grid.count { it >= 0 } < 15) return null
+    crop(a)
+    return a
+}
+
+/** Difficulty choices for player pictures, mapped onto campaign bands. */
+fun customDifficulty(d: Int): Triple<Int, String, Int> = when (d) {
+    0 -> Triple(8, "Normal", 1)     // relaxed: up to 4 slots needed
+    1 -> Triple(30, "Normal", 2)    // normal: needs 4+ slots, careless taps lose
+    else -> Triple(45, "Hard", 3)   // hard: needs all 5 slots
+}
+
+fun customLevel(id: String, art: Art, difficulty: Int, seed: Int): Level? {
+    val (L, tag, _) = customDifficulty(difficulty)
+    val band = bandFor(L, tag)
+    val r = Rng(seed)
+    val dd = colorDepths(art)
+    val lo = IntArray(art.pal.size) { Int.MAX_VALUE }; val hi = IntArray(art.pal.size) { -1 }
+    for (i in art.grid.indices) { val c = art.grid[i]; if (c < 0) continue; lo[c] = min(lo[c], dd.d[i]); hi[c] = max(hi[c], dd.d[i]) }
+    val split = art.pal.indices.filter { hi[it] > lo[it] }.toSet()
+    val nCols = if (band.minMin >= 5) 4 else if (art.W * art.H > 500) 5 else 4
+    val b = searchDeals(art, split, L, tag, band, nCols, r, art.name, SolverStats.nodes, 200_000L, null) ?: return null
+    return Level(L, "Custom", art.name, art.W, art.H, art.grid, art.pal.toList(), b.nests, b.cols, b.sol, null, id)
 }
 
 // ---------------- real-time engine ----------------

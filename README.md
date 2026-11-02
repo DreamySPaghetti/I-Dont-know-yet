@@ -8,6 +8,7 @@ Tap a cube in the tray to move it into a waiting slot. Its ants march out of the
 - `GameView.kt` draws the board, ants, slots and tray on a native Canvas. `MainActivity.kt` is the Compose UI.
 - `app/src/test/.../Harness.kt` is the self-test. CI runs it on every push (`gradle testDebugUnitTest`).
 - Settings → Debug view shows reachable tiles and the solver's answer.
+- My Pictures turns any photo into a pixel-map puzzle (k-means colour quantisation, then the same solver-checked deal search as the campaign).
 
 ## Install on your phone
 

@@ -84,6 +84,27 @@ fun runHarness(maxLevel: Int = 200, out: (String) -> Unit = ::println): Int {
         }
         out("L$L after Extra Slot, Pick Up, Shuffle ($sh), Vacuum: ${e.status}")
     }
+    // 5. player pictures: a synthetic "photo" turned into a pixel map at every size and difficulty
+    for (side in listOf(16, 24, 32)) for (diff in 0..2) {
+        val w = side; val h = side * 3 / 4
+        val px = IntArray(w * h) { i ->
+            val x = i % w - w / 2.0; val y = i / w - h / 2.0; val d = Math.hypot(x, y)
+            val c = when { d < h * .18 -> 0xFFE8524A.toInt(); d < h * .32 -> 0xFFF6C443.toInt(); y > h * .2 -> 0xFF5CB85C.toInt(); else -> 0xFF4FC3F7.toInt() }
+            if ((i * 7919) % 23 == 0) c xor 0x000F0F0F else c
+        }
+        val t0 = System.nanoTime()
+        val art = pixelArt(px, w, h, 6, customDifficulty(diff).third, 1234 + side, "Test", diff)
+        check(art != null, "custom $side/$diff produced no art")
+        val lv = art?.let { customLevel("t", it, diff, 99) }
+        check(lv != null, "custom $side/$diff produced no level")
+        if (lv != null) {
+            val tiles = IntArray(lv.palette.size); for (v in lv.grid) if (v >= 0) tiles[v]++
+            val caps = IntArray(lv.palette.size); for (col in lv.cols) for (c in col) caps[c.color] += c.cap
+            check(tiles.contentEquals(caps), "custom $side/$diff capacity sums")
+            check(solveLevel(Board(lv.W, lv.H, lv.grid, lv.palette.size, lv.nests), lv.cols, 5, 20000) != null, "custom $side/$diff not solvable")
+            out("custom picture ${lv.W}x${lv.H} difficulty $diff: colours=${lv.palette.size} cubes=${lv.cols.sumOf { it.size }} minSlots=${minSlots(lv)} ${(System.nanoTime() - t0) / 1_000_000} ms")
+        }
+    }
     out(if (fails == 0) "ALL PASS" else "$fails FAILURES")
     return fails
 }

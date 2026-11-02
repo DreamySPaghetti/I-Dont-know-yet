@@ -8,6 +8,15 @@ class GalleryItem(val l: Int, val n: String, val w: Int, val h: Int, val p: List
     fun grid() = IntArray(d.length) { if (d[it] == '.') -1 else d[it].toString().toInt(36) }
 }
 
+/** A player-made puzzle: the finished pixel map plus the settings needed to rebuild the same level. */
+class CustomPuzzle(val id: String, var name: String, val w: Int, val h: Int, val p: List<String>, val d: String, val difficulty: Int, val seed: Int, var stars: Int = 0) {
+    fun grid() = IntArray(d.length) { if (d[it] == '.') -1 else d[it].toString().toInt(36) }
+    fun art() = Art(w, h, grid(), p.toMutableList(), name)
+    companion object {
+        fun encode(grid: IntArray) = buildString { for (v in grid) append(if (v < 0) '.' else v.toString(36)[0]) }
+    }
+}
+
 class SaveData {
     var level = 1
     var coins = 50
@@ -20,6 +29,7 @@ class SaveData {
     var vib = true
     var fast = false
     var streak = 0
+    val puzzles = mutableListOf<CustomPuzzle>()
 
     fun toJson(): String {
         val o = JSONObject()
@@ -28,6 +38,7 @@ class SaveData {
         o.put("stars", JSONObject(stars.mapKeys { it.key.toString() } as Map<*, *>))
         o.put("gallery", JSONArray().apply { gallery.forEach { g -> put(JSONObject().put("l", g.l).put("n", g.n).put("w", g.w).put("h", g.h).put("p", JSONArray(g.p)).put("d", g.d)) } })
         o.put("seen", JSONArray(seen.toList()))
+        o.put("puzzles", JSONArray().apply { puzzles.forEach { c -> put(JSONObject().put("id", c.id).put("n", c.name).put("w", c.w).put("h", c.h).put("p", JSONArray(c.p)).put("d", c.d).put("diff", c.difficulty).put("seed", c.seed).put("stars", c.stars)) } })
         o.put("settings", JSONObject().put("sound", sound).put("music", music).put("vib", vib).put("fast", fast))
         return o.toString()
     }
@@ -49,6 +60,12 @@ class SaveData {
                     }
                 }
                 o.optJSONArray("seen")?.let { a -> for (i in 0 until a.length()) s.seen.add(a.getString(i)) }
+                o.optJSONArray("puzzles")?.let { a ->
+                    for (i in 0 until a.length()) {
+                        val c = a.getJSONObject(i); val p = c.getJSONArray("p")
+                        s.puzzles.add(CustomPuzzle(c.getString("id"), c.getString("n"), c.getInt("w"), c.getInt("h"), List(p.length()) { p.getString(it) }, c.getString("d"), c.getInt("diff"), c.getInt("seed"), c.optInt("stars")))
+                    }
+                }
                 o.optJSONObject("settings")?.let { st ->
                     s.sound = st.optBoolean("sound", true); s.music = st.optBoolean("music", true); s.vib = st.optBoolean("vib", true); s.fast = st.optBoolean("fast", false)
                 }
