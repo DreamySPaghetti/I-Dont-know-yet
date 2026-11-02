@@ -141,7 +141,7 @@ class MainActivity : ComponentActivity() {
     // ---- create-from-photo state ----
     private var source: Bitmap? = null
     private var draftArt by mutableStateOf<Art?>(null)
-    private var draftSize by mutableIntStateOf(24)
+    private var draftSize by mutableIntStateOf(32)
     private var draftColors by mutableIntStateOf(6)
     private var draftDiff by mutableIntStateOf(1)
     private var draftName by mutableStateOf("My picture")

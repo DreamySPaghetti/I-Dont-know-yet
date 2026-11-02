@@ -477,6 +477,17 @@ private fun labOf(hex: String): DoubleArray {
     return doubleArrayOf(116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz))
 }
 
+fun labToHex(l: DoubleArray): String {
+    val fy = (l[0] + 16) / 116; val fx = fy + l[1] / 500; val fz = fy - l[2] / 200
+    fun inv(t: Double) = if (t * t * t > .008856) t * t * t else (t - 16.0 / 116) / 7.787
+    val x = inv(fx) * .95047; val y = inv(fy); val z = inv(fz) * 1.08883
+    val r = 3.2406 * x - 1.5372 * y - .4986 * z
+    val g = -.9689 * x + 1.8758 * y + .0415 * z
+    val b = .0557 * x - .2040 * y + 1.0570 * z
+    fun gam(c: Double): Int { val v = if (c <= .0031308) 12.92 * c else 1.055 * Math.pow(c, 1 / 2.4) - .055; return (v * 255).roundToInt().coerceIn(0, 255) }
+    return "#%02x%02x%02x".format(gam(r), gam(g), gam(b))
+}
+
 fun deltaE(a: String, b: String): Double {
     val p = lab(a); val q = lab(b)
     return Math.sqrt((p[0] - q[0]) * (p[0] - q[0]) + (p[1] - q[1]) * (p[1] - q[1]) + (p[2] - q[2]) * (p[2] - q[2]))
@@ -948,6 +959,64 @@ fun quantize(argb: IntArray, k: Int, seed: Int): Pair<IntArray, MutableList<Stri
     return out to pal
 }
 
+/** Removes single stray pixels: a tile whose neighbours mostly share one other colour takes that colour. */
+fun despeckle(a: Art) {
+    val src = a.grid.copyOf()
+    for (i in src.indices) {
+        if (src[i] < 0) continue
+        val nb = nbrs(i, a.W, a.H)
+        if (nb.any { src[it] == src[i] }) continue
+        val votes = nb.filter { src[it] >= 0 }.groupingBy { src[it] }.eachCount()
+        val best = votes.maxByOrNull { it.value } ?: continue
+        if (best.value * 2 >= nb.size) a.grid[i] = best.key
+    }
+}
+
+/** Pushes near-identical colours apart in lightness (keeping their hue) until every pair is at least deltaE 20 apart. */
+fun separateColors(a: Art) {
+    var guard = 0
+    while (guard++ < 200) {
+        compact(a)
+        var bi = -1; var bj = -1; var bd = 20.0
+        for (i in a.pal.indices) for (j in i + 1 until a.pal.size) { val d = deltaE(a.pal[i], a.pal[j]); if (d < bd) { bd = d; bi = i; bj = j } }
+        if (bi < 0) return
+        val li = lab(a.pal[bi]).copyOf(); val lj = lab(a.pal[bj]).copyOf()
+        val (lo, hi) = if (li[0] <= lj[0]) li to lj else lj to li
+        val canDown = lo[0] > 4; val canUp = hi[0] < 96
+        if (!canDown && !canUp) { val c = counts(a); mergeInto(a, if (c[bi] < c[bj]) bi else bj); continue }
+        if (canDown) lo[0] = max(0.0, lo[0] - 3)
+        if (canUp) hi[0] = min(100.0, hi[0] + 3)
+        val nlo = labToHex(lo); val nhi = labToHex(hi)
+        if (li[0] <= lj[0]) { a.pal[bi] = nlo; a.pal[bj] = nhi } else { a.pal[bj] = nlo; a.pal[bi] = nhi }
+    }
+}
+
+/** Makes every colour count a multiple of 5 by recolouring single edge tiles to a neighbouring colour; only (total % 5) tiles are removed. */
+fun fix5Gentle(a: Art, r: Rng) {
+    val W = a.W; val H = a.H; val g = a.grid
+    var guard = 0
+    while (guard++ < 600) {
+        val c = counts(a)
+        val rems = c.map { it % 5 }
+        val nonzero = rems.indices.filter { rems[it] != 0 }
+        if (nonzero.size <= 1) break
+        // cheapest colour to fix: the one closest to a multiple of 5
+        val k = nonzero.minByOrNull { rems[it] }!!
+        var bestTile = -1; var bestTo = -1; var bestScore = -1
+        for (i in g.indices) {
+            if (g[i] != k) continue
+            for (j in nbrs(i, W, H)) {
+                val to = g[j]; if (to < 0 || to == k) continue
+                val score = (if ((rems[to] + 1) % 5 == 0) 100 else 0) + rems[to] * 10 + nbrs(i, W, H).count { g[it] == to }
+                if (score > bestScore) { bestScore = score; bestTile = i; bestTo = to }
+            }
+        }
+        if (bestTile < 0) break
+        g[bestTile] = bestTo
+    }
+    fix5(a, r)
+}
+
 /** Turns a downscaled picture into a pixel map ready to play (colours merged, distinct, multiples of 5). */
 fun pixelArt(argb: IntArray, w: Int, h: Int, colors: Int, depthLimit: Int, seed: Int, name: String, frame: Int = 0): Art? {
     val (grid, pal) = quantize(argb, colors, seed)
@@ -959,7 +1028,7 @@ fun pixelArt(argb: IntArray, w: Int, h: Int, colors: Int, depthLimit: Int, seed:
         val g2 = IntArray(fw * fh) { -1 }
         for (y in 0 until h) for (x in 0 until w) g2[(y + frame) * fw + x + frame] = grid[y * w + x]
         a = Art(fw, fh, g2, pal, name)
-        val frames = listOf("#5b4636", "#2f3e46", "#7d5ba6")
+        val frames = listOf("#5b4636", "#c9b28f", "#2f3e46", "#7a8a99", "#7d5ba6")
         for (k in 0 until frame) {
             val hex = frames.firstOrNull { c -> a.pal.all { deltaE(c, it) >= 20 } } ?: frames[k]
             val ci = a.pal.size; a.pal.add(hex)
@@ -967,13 +1036,11 @@ fun pixelArt(argb: IntArray, w: Int, h: Int, colors: Int, depthLimit: Int, seed:
         }
     }
     if (a.grid.any { it < 0 }) fillBackground(a, 1, Rng(seed))
-    mergeSmall(a, max(5, w * h / 120))
-    makeDistinct(a)
-    capColors(a, colors + frame)
-    reduceDepth(a, depthLimit)
+    despeckle(a)
     mergeSmall(a, 5)
-    makeDistinct(a)
-    fix5(a, Rng(seed + 1))
+    capColors(a, colors + frame)
+    separateColors(a)
+    fix5Gentle(a, Rng(seed + 1))
     if (a.pal.isEmpty() || a.grid.count { it >= 0 } < 15) return null
     crop(a)
     return a
