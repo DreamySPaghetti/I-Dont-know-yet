@@ -27,6 +27,23 @@ class SmartTest {
     @Test fun edgeFaceDoesNotZoomIn() =
         assertEquals(1f, Smart.targetZoom(3800, 1400, 3990, 1600, 4000, 3000, 1f, 8f), 0.01f)
 
+    @Test fun findsBrightObjectAndFramesIt() {
+        // 64x48 dark grid with a bright 8x6 block at cells x=40..47, y=10..15.
+        val g = FloatArray(64 * 48) { 30f }
+        for (y in 10..15) for (x in 40..47) g[y * 64 + x] = 200f
+        val box = Smart.objectBox(g, 64, 48, 43.5f / 64, 12.5f / 48)
+        assertEquals(40f / 64, box[0], 0.001f); assertEquals(48f / 64, box[2], 0.001f)
+        assertEquals(10f / 48, box[1], 0.001f); assertEquals(16f / 48, box[3], 0.001f)
+        val f = Smart.frameObject(box, 4f)
+        assertEquals(4f, f[2], 0.001f) // object is small, so zoom hits the quality cap
+        assertEquals(0.6875f, f[0], 0.001f) // centred on the object
+    }
+
+    @Test fun cropStaysInsideSensor() {
+        val f = Smart.frameObject(floatArrayOf(0.9f, 0.9f, 1f, 1f), 4f)
+        assertTrue(f[0] + 0.5f / f[2] <= 1.0001f && f[1] + 0.5f / f[2] <= 1.0001f)
+    }
+
     @Test fun noiseSharperThanFlat() {
         val r = Random(1)
         val noisy = IntArray(64 * 64) { r.nextInt(256) }

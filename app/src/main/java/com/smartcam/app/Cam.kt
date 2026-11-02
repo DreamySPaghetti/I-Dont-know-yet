@@ -45,6 +45,9 @@ interface CamListener {
     fun error(msg: String)
 }
 
+private const val GW = 64
+private const val GH = 48
+
 @SuppressLint("MissingPermission")
 class Cam(
     private val ctx: Context,
@@ -84,6 +87,11 @@ class Cam(
     private var lastFaceMs = 0L
     private var faceCount = 0
     private var focusRect: MeteringRectangle? = null
+    // Double-tap zoom: an off-centre digital crop [cx, cy, zoom] easing toward panTarget. null = centred zoom.
+    private var pan: FloatArray? = null
+    private var panTarget: FloatArray? = null
+    private val sentPan = FloatArray(3)
+    private var maxDigital = 4f
 
     @Volatile private var gyro = 0f
     private var subject = 0f
@@ -123,31 +131,66 @@ class Cam(
         opening = false
     }
 
-    fun pinch(scale: Float) {
+    fun pinch(scale: Float) = h.post {
         opts.autoZoom = false
-        zoom = (zoom * scale).coerceIn(zRange.lower, zRange.upper)
+        val p = pan
+        if (p == null) { zoom = (zoom * scale).coerceIn(zRange.lower, zRange.upper); return@post }
+        val z = (panTarget!![2] * scale).coerceIn(1f, maxDigital)
+        panTarget!![2] = z; p[2] = z
+        if (z <= 1.001f) panTarget = floatArrayOf(0.5f, 0.5f, 1f)
     }
+
+    /** Portrait-preview tap (0..1) → fraction of the current crop, in sensor orientation. */
+    private fun viewToCrop(nx: Float, ny: Float) = when (sensorOrientation) {
+        90 -> ny to 1 - nx
+        270 -> 1 - ny to nx
+        180 -> 1 - nx to 1 - ny
+        else -> nx to ny
+    }
+
+    // Current view as centre (fractions of the full sensor) and zoom.
+    private fun cropCx() = pan?.get(0) ?: 0.5f
+    private fun cropCy() = pan?.get(1) ?: 0.5f
+    private val effZoom get() = pan?.get(2) ?: zoom
 
     /** Focus and meter on a point given as 0..1 fractions of the portrait preview. */
     fun focusAt(nx: Float, ny: Float) = h.post {
-        if (session == null) return@post
-        val (sx, sy) = when (sensorOrientation) {
-            90 -> ny to 1 - nx
-            270 -> 1 - ny to nx
-            180 -> 1 - nx to 1 - ny
-            else -> nx to ny
-        }
-        // Regions use zoom-1.0 coordinates, so map the tap back through the current crop.
+        val (sx, sy) = viewToCrop(nx, ny)
+        val z = effZoom
+        focusOn(cropCx() + (sx - 0.5f) / z, cropCy() + (sy - 0.5f) / z, 0.05f / z)
+    }
+
+    /** Focus/meter region centred on a full-sensor point; regions use zoom-1.0 coordinates. */
+    private fun focusOn(fx: Float, fy: Float, halfFrac: Float) {
+        if (session == null) return
         val w = active.width(); val hh = active.height()
-        val cx = w * (0.5f + (sx - 0.5f) / zoom)
-        val cy = hh * (0.5f + (sy - 0.5f) / zoom)
-        val half = max(w, hh) * 0.05f / zoom
-        val l = (cx - half).toInt().coerceIn(0, w - 2)
-        val t = (cy - half).toInt().coerceIn(0, hh - 2)
-        focusRect = MeteringRectangle(l, t, min(2 * half.toInt(), w - l - 1).coerceAtLeast(1),
-            min(2 * half.toInt(), hh - t - 1).coerceAtLeast(1), MeteringRectangle.METERING_WEIGHT_MAX - 1)
+        val half = (max(w, hh) * halfFrac).toInt().coerceAtLeast(8)
+        val l = (fx * w - half).toInt().coerceIn(0, w - 2)
+        val t = (fy * hh - half).toInt().coerceIn(0, hh - 2)
+        focusRect = MeteringRectangle(l, t, min(2 * half, w - l - 1).coerceAtLeast(1),
+            min(2 * half, hh - t - 1).coerceAtLeast(1), MeteringRectangle.METERING_WEIGHT_MAX - 1)
         repeat()
         safe { session?.capture(previewReq().apply { set(Q.CONTROL_AF_TRIGGER, M.CONTROL_AF_TRIGGER_START) }.build(), cb, h) }
+    }
+
+    /**
+     * Double-tap: find the object under the finger, then crop so it fills ~60% of the frame,
+     * centred on it, and focus/meter on it. Double-tap again while zoomed to zoom back out.
+     */
+    fun zoomTo(nx: Float, ny: Float) = h.post {
+        if (session == null) return@post
+        opts.autoZoom = false
+        val t = panTarget
+        if (t != null && t[2] > 1.01f) { panTarget = floatArrayOf(0.5f, 0.5f, 1f); out.hud("Zooming out"); return@post }
+        val g = lastGrid ?: return@post
+        val (sx, sy) = viewToCrop(nx, ny)
+        val z = effZoom.coerceAtLeast(1f)
+        val cx = cropCx(); val cy = cropCy()
+        val b = Smart.objectBox(g, GW, GH, sx, sy)
+        val full = floatArrayOf(cx + (b[0] - 0.5f) / z, cy + (b[1] - 0.5f) / z, cx + (b[2] - 0.5f) / z, cy + (b[3] - 0.5f) / z)
+        if (pan == null) pan = floatArrayOf(0.5f, 0.5f, z)
+        panTarget = Smart.frameObject(full, maxDigital)
+        focusOn((full[0] + full[2]) / 2, (full[1] + full[3]) / 2, max(full[2] - full[0], full[3] - full[1]) / 3)
     }
 
     fun clearFocus() = h.post {
@@ -188,6 +231,8 @@ class Cam(
         maxAf = chars.get(C.CONTROL_MAX_REGIONS_AF) ?: 0
         maxAe = chars.get(C.CONTROL_MAX_REGIONS_AE) ?: 0
         zoom = zoom.coerceIn(zRange.lower, zRange.upper)
+        // Cap double-tap crops at 4x: beyond that a digital crop throws away too much resolution.
+        maxDigital = min(chars.get(C.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 4f, 4f)
 
         val map = chars.get(C.SCALER_STREAM_CONFIGURATION_MAP)!!
         fun is43(w: Int, hh: Int) = w * 3 == hh * 4
@@ -242,7 +287,14 @@ class Cam(
     private fun base(template: Int) = device!!.createCaptureRequest(template).apply {
         set(Q.CONTROL_MODE, M.CONTROL_MODE_AUTO)
         set(Q.CONTROL_AWB_MODE, M.CONTROL_AWB_MODE_AUTO)
-        set(Q.CONTROL_ZOOM_RATIO, zoom)
+        val p = pan
+        if (p == null) set(Q.CONTROL_ZOOM_RATIO, zoom) else {
+            set(Q.CONTROL_ZOOM_RATIO, 1f)
+            val w = (active.width() / p[2]).toInt(); val hh = (active.height() / p[2]).toInt()
+            val l = (p[0] * active.width() - w / 2f).toInt().coerceIn(0, active.width() - w)
+            val t = (p[1] * active.height() - hh / 2f).toInt().coerceIn(0, active.height() - hh)
+            set(Q.SCALER_CROP_REGION, Rect(l, t, l + w, t + hh))
+        }
         if (ois) set(Q.LENS_OPTICAL_STABILIZATION_MODE, M.LENS_OPTICAL_STABILIZATION_MODE_ON)
         val fr = focusRect
         if (fr != null && maxAf > 0) {
@@ -266,6 +318,7 @@ class Cam(
     private fun repeat() {
         val s = session ?: return
         sentZoom = zoom; sentEv = evSteps(previewEv())
+        pan?.copyInto(sentPan)
         safe { s.setRepeatingRequest(previewReq().build(), cb, h) }
     }
 
@@ -279,7 +332,7 @@ class Cam(
     private fun plan(): Exposure {
         val cap = opts.maxIso
         val isoMax = if (cap > 0) cap.coerceIn(isoRange.lower, isoRange.upper) else isoRange.upper
-        return Smart.plan(meterIso, meterNs, hiBias, Smart.shutterLimitNs(gyro, subject, zoom, ois),
+        return Smart.plan(meterIso, meterNs, hiBias, Smart.shutterLimitNs(gyro, subject, effZoom, ois),
             isoRange.lower, isoMax, tRange.lower, min(tRange.upper, 500_000_000L))
     }
 
@@ -289,7 +342,10 @@ class Cam(
             res.get(Res.SENSOR_SENSITIVITY)?.let { meterIso = it }
             res.get(Res.SENSOR_EXPOSURE_TIME)?.let { meterNs = it }
             updateZoom(res.get(Res.STATISTICS_FACES))
-            if (abs(zoom - sentZoom) > 0.01f || evSteps(previewEv()) != sentEv) repeat()
+            stepPan()
+            val p = pan
+            val panMoved = p != null && (0..2).any { abs(p[it] - sentPan[it]) > 0.002f }
+            if (panMoved || abs(zoom - sentZoom) > 0.01f || evSteps(previewEv()) != sentEv) repeat()
             if (shooting && !burstSent) {
                 val af = res.get(Res.CONTROL_AF_STATE)
                 val locked = af == M.CONTROL_AF_STATE_FOCUSED_LOCKED || af == M.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED
@@ -312,16 +368,25 @@ class Cam(
         }
         if (!useManualExposure) {
             val why = if (manual) "phone auto-exposure" else "phone auto-exposure (no manual control on this device)"
-            return "%.1fx · %+.1f EV · %s\n%s".format(zoom, opts.ev + hiBias, why, second)
+            return "%.1fx · %+.1f EV · %s\n%s".format(effZoom, opts.ev + hiBias, why, second)
         }
         val e = plan()
-        return "ISO ${e.iso} · ${shutterText(e.timeNs)} · %.1fx · %+.1f EV\n%s".format(zoom, opts.ev + hiBias, second)
+        return "ISO ${e.iso} · ${shutterText(e.timeNs)} · %.1fx · %+.1f EV\n%s".format(effZoom, opts.ev + hiBias, second)
+    }
+
+    /** Eases the double-tap crop toward its target (a smooth ~0.3s glide), and drops it once back at 1x. */
+    private fun stepPan() {
+        val p = pan ?: return
+        val t = panTarget ?: run { pan = null; return }
+        for (i in 0..2) p[i] += (t[i] - p[i]) * 0.25f
+        if (t[2] <= 1.001f && abs(p[2] - 1f) < 0.01f) { pan = null; panTarget = null; zoom = 1f; repeat() }
     }
 
     private fun updateZoom(faces: Array<Face>?) {
         val f = faces?.filter { it.score >= 50 }.orEmpty()
         faceCount = f.size
         if (!opts.autoZoom) return
+        if (pan != null) { pan = null; panTarget = null; zoom = 1f } // auto zoom turned back on
         val now = SystemClock.uptimeMillis()
         val target = if (f.isNotEmpty()) {
             lastFaceMs = now
@@ -336,7 +401,7 @@ class Cam(
         val p = img.planes[0]
         val buf = p.buffer; val rs = p.rowStride
         val w = img.width; val hh = img.height
-        val gw = 32; val gh = 24
+        val gw = GW; val gh = GH
         val sum = FloatArray(gw * gh); val cnt = IntArray(gw * gh)
         var clipped = 0; var n = 0
         for (y in 0 until hh step 4) for (x in 0 until w step 4) {

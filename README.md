@@ -10,7 +10,7 @@ Android camera (Kotlin, Camera2) that picks settings for you:
 
 **Screen**
 - Bottom-left thumbnail shows your last photo; tap it to open it in your gallery app.
-- Tap the preview to focus/meter there, long-press to return to auto focus, pinch to zoom.
+- Tap the preview to focus/meter there, double-tap an object to zoom in and centre it (again to zoom out), long-press to return to auto focus, pinch to zoom.
 - ⚙ Options: smart exposure, highlight protection, auto zoom, grid, volume-key shutter, burst (off/3/5), max ISO, self-timer (3s/10s), exposure compensation (±2 EV). Settings are remembered.
 
 Every push to `main` builds `SmartCam.apk` and publishes it under Releases.

@@ -17,7 +17,7 @@ class Overlay(ctx: Context) : View(ctx) {
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(255, 214, 0); style = Paint.Style.STROKE; strokeWidth = 2 * d }
 
     fun focus(x: Float, y: Float) { fx = x; fy = y; invalidate() }
-    fun clearFocus() { fx = -1f; invalidate() }
+    fun hideRing() { fx = -1f; invalidate() }
 
     override fun onDraw(c: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()

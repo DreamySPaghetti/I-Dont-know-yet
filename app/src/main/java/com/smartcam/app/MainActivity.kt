@@ -123,17 +123,26 @@ class MainActivity : Activity(), CamListener {
 
     private fun setupGestures() {
         val pinch = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScale(d: ScaleGestureDetector): Boolean { cam.pinch(d.scaleFactor); refresh(); return true }
+            override fun onScale(d: ScaleGestureDetector): Boolean { opts.autoZoom = false; cam.pinch(d.scaleFactor); refresh(); return true }
         })
         val taps = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onSingleTapUp(e: MotionEvent): Boolean {
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                if (settings.visibility == View.VISIBLE) return true
+                opts.autoZoom = false; refresh()
+                // The object glides to the centre, so only flash the ring where the finger was.
+                overlay.focus(e.x, e.y)
+                overlay.postDelayed({ overlay.hideRing() }, 500)
+                cam.zoomTo(e.x / tv.width, e.y / tv.height)
+                return true
+            }
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (settings.visibility == View.VISIBLE) { toggleSettings(); return true }
                 overlay.focus(e.x, e.y)
                 cam.focusAt(e.x / tv.width, e.y / tv.height)
                 return true
             }
             override fun onLongPress(e: MotionEvent) {
-                overlay.clearFocus(); cam.clearFocus()
+                overlay.hideRing(); cam.clearFocus()
                 Toast.makeText(this@MainActivity, "Focus back to automatic", Toast.LENGTH_SHORT).show()
             }
         })
@@ -198,7 +207,7 @@ class MainActivity : Activity(), CamListener {
                 override fun onStopTrackingTouch(s: SeekBar) {}
             })
         })
-        label("Tap the preview to focus there; long-press to go back to automatic focus.", 12f)
+        label("Tap to focus there. Double-tap an object to zoom in and frame it (double-tap again to zoom out). Long-press for automatic focus.", 12f)
         settingsRows.addView(pill("Done") { toggleSettings() }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(12) })
 
         return ScrollView(this).apply { addView(settingsRows); visibility = View.GONE; isFillViewport = false }
