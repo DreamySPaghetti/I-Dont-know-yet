@@ -35,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
@@ -81,7 +82,9 @@ class MainActivity : ComponentActivity() {
 fun GameApp(prefs: SharedPreferences) {
     var level by remember { mutableIntStateOf(prefs.getInt("level", 1)) }
     var attempt by remember { mutableIntStateOf(0) }
+    var fast by remember { mutableStateOf(prefs.getBoolean("fast", false)) }
     val game = remember(level, attempt) { Game(level) }
+    game.speed = if (fast) 2f else 1f
     var frame by remember { mutableLongStateOf(0L) }
     var status by remember(game) { mutableIntStateOf(0) }
     val tm = rememberTextMeasurer()
@@ -104,6 +107,13 @@ fun GameApp(prefs: SharedPreferences) {
                     Text("Level $level", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                     Text(game.pic.name, color = MUTED, fontSize = 14.sp)
                 }
+                Text(
+                    if (fast) "2×" else "1×",
+                    Modifier.clip(RoundedCornerShape(10.dp)).background(if (fast) ACCENT else PANEL)
+                        .clickable { fast = !fast; prefs.edit().putBoolean("fast", fast).apply() }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    color = if (fast) Color.Black else Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp
+                )
                 IconButton(onClick = { attempt++ }) { Icon(Icons.Filled.Refresh, "Restart level", tint = MUTED) }
             }
             Canvas(
@@ -111,8 +121,10 @@ fun GameApp(prefs: SharedPreferences) {
                     detectTapGestures { pos ->
                         val wp = Scene(game, size.toSize()).world(pos)
                         val x = kotlin.math.floor(wp.x - game.bx0).toInt()
-                        if (wp.y > -0.6f && wp.y < game.h + 0.4f && game.tapColumn(x)) {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        val y = kotlin.math.floor(wp.y + 0.15f).toInt()
+                        if (x in 0 until game.w && y in 0 until game.h) {
+                            val r = game.tapCell(y * game.w + x)
+                            if (r != 0) haptic.performHapticFeedback(if (r == 1) HapticFeedbackType.TextHandleMove else HapticFeedbackType.LongPress)
                         }
                     }
                 }
@@ -136,7 +148,7 @@ fun GameApp(prefs: SharedPreferences) {
             }
         }
         if (status == 2) {
-            EndCard("Jammed!", "Every storage slot is full and nothing fits on the picture yet.") {
+            EndCard("Jammed!", "The sorting space is full and no hole can take what's left. Plan the order and try again.") {
                 if (!game.rescued) {
                     Button(
                         onClick = { game.rescue(); status = 0 },

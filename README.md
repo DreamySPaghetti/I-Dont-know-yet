@@ -2,7 +2,7 @@
 
 A calm, ad-free color-sorting puzzle for Android.
 
-Tap a column to send its front stack of cubes into storage. Little porter bots carry each cube to a matching hole in the pixel picture. Pictures fill from the bottom of each column up, so only the lowest empty hole in a column can take a cube. If all storage slots fill with colors that don't fit anywhere yet, you're jammed. Plan ahead and finish the picture.
+Tap a stack of cubes on the board and an ant marches out along the trail, picks it up and carries it to the hole of the same color. If no matching hole is open, it goes into the limited sorting space; fill that up with the wrong colors and the trail jams. Only stacks with an open side can be reached, so clear the edges to open lanes inward. Clear every stack to reveal the hidden pixel picture. No timer, no ads. Use the 1×/2× button to change ant speed.
 
 ## Install on your phone
 
