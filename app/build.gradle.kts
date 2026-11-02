@@ -34,5 +34,6 @@ android {
 }
 
 dependencies {
+    implementation("com.google.mlkit:object-detection:17.0.2")
     testImplementation("junit:junit:4.13.2")
 }
