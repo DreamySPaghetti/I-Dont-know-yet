@@ -141,7 +141,7 @@ class MainActivity : ComponentActivity() {
     // ---- create-from-photo state ----
     private var source: Bitmap? = null
     private var draftArt by mutableStateOf<Art?>(null)
-    private var draftSize by mutableIntStateOf(32)
+    private var draftSize by mutableIntStateOf(40)
     private var draftColors by mutableIntStateOf(6)
     private var draftDiff by mutableIntStateOf(1)
     private var draftName by mutableStateOf("My picture")
@@ -546,7 +546,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(PANEL).padding(14.dp)
                 )
                 Label("Size")
-                Seg(listOf(16 to "Small", 24 to "Medium", 32 to "Large"), draftSize) { draftSize = it; rebuildDraft() }
+                Seg(listOf(24 to "Small", 32 to "Medium", 40 to "Large", 48 to "XL"), draftSize) { draftSize = it; rebuildDraft() }
                 Label("Colours")
                 Seg(listOf(4 to "4", 5 to "5", 6 to "6", 8 to "8"), draftColors) { draftColors = it; rebuildDraft() }
                 Label("Difficulty")
