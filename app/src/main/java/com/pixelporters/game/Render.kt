@@ -50,9 +50,11 @@ private fun DrawScope.label(tm: TextMeasurer, s: String, center: Offset, color: 
 
 private fun ink(c: Color) = if (c.luminance() > 0.55f) Color(0xFF1C2030) else Color.White
 
-private fun poly(vararg pts: Offset) = Path().apply {
-    moveTo(pts[0].x, pts[0].y)
-    for (i in 1 until pts.size) lineTo(pts[i].x, pts[i].y)
+private fun poly(a: Offset, b: Offset, c: Offset, d: Offset) = Path().apply {
+    moveTo(a.x, a.y)
+    lineTo(b.x, b.y)
+    lineTo(c.x, c.y)
+    lineTo(d.x, d.y)
     close()
 }
 
