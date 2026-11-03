@@ -87,13 +87,13 @@ object CoachPrompt {
         val cards: List<Pair<Card, Zone>>,
         val lands: Map<Zone, Map<String, Int>>,
         val creatures: Map<Zone, List<String>>,
-        /** Names of hand cards Arena highlights as playable now; null when it couldn't be measured. */
-        val playable: Set<String>? = null,
-        val notPlayable: Set<String> = emptySet(),
         val lifeYou: Int?,
         val lifeOpp: Int?,
         val phase: Phase,
         val other: List<String>,
+        /** Names of hand cards Arena highlights as playable now; null when it couldn't be measured. */
+        val playable: Set<String>? = null,
+        val notPlayable: Set<String> = emptySet(),
     )
 
     enum class Phase(val note: String, val question: String) {
