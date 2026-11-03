@@ -526,21 +526,9 @@ class ScanService : Service() {
     private fun readBoard(bmp: Bitmap) {
         recognizer.process(InputImage.fromBitmap(bmp, 0))
             .addOnSuccessListener { text ->
-                val w = bmp.width; val h = bmp.height
-                val px = IntArray(w * h).also { bmp.getPixels(it, 0, w, 0, 0, w, h) }
-                val rgb = { x: Int, y: Int -> px[y * w + x] and 0xFFFFFF }
-                val seen = text.textBlocks.flatMap { it.lines }.mapNotNull { l ->
-                    val r = l.boundingBox ?: return@mapNotNull null
-                    val cy = r.exactCenterY() / h
-                    // Only hand cards (bottom of my side) get the "playable" outline check.
-                    val glow = if (cy > 0.62f) CoachPrompt.glowFraction(rgb, w, h, r.left, r.top, r.right, r.bottom) else -1f
-                    CoachPrompt.Seen(l.text, r.exactCenterX() / w, cy, r.height().toFloat() / h, glow, l.angle)
-                }
-                val board = CoachPrompt.analyze(seen) { matcher.match(it) }
+                val board = BoardReader.board(text, bmp, matcher)
                 val cards = board.cards
-                val names = board.cards.map { it.first.name }.toSet()
-                val learned = LessonMatch.best(Lessons.all(this), board.phase.name, names)
-                val prompt = CoachPrompt.build(board, lessons = learned)
+                val prompt = BoardReader.prompt(this, board)
                 val image = jpeg(bmp, 1024)
                 lastImage = image; lastPrompt = prompt; lastBoard = board; lastAnswer = ""
                 lastFull = jpeg(bmp, 1600); lastTime = System.currentTimeMillis()

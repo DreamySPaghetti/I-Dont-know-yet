@@ -37,6 +37,9 @@ class CoachActivity : Activity() {
     private lateinit var step1: TextView
     private lateinit var lessonsStatus: TextView
     private lateinit var logStatus: TextView
+    private lateinit var testBtn: Button
+    private var testGemma: Gemma? = null
+    private val testExec = Executors.newSingleThreadExecutor()
     private lateinit var step2: TextView
     private lateinit var step3: TextView
     private var copying = false
@@ -47,6 +50,7 @@ class CoachActivity : Activity() {
         private const val REQ_CAPTURE = 11
         private const val REQ_NOTIFY = 12
         private const val REQ_PICK = 13
+        private const val REQ_SHOT = 14
         private const val ARENA_PACKAGE = "com.wizards.mtga"
     }
 
@@ -107,6 +111,10 @@ class CoachActivity : Activity() {
             minHeight = (56 * dp).toInt(); setOnClickListener { toggleCoach() }
         }
         col.addView(startBtn)
+        col.addView(label("Try it without a game", 16f, true))
+        col.addView(label("Pick an Arena screenshot from your gallery and see what the coach would say.").apply { textSize = 13f })
+        testBtn = Button(this).apply { text = "Test on a screenshot"; setOnClickListener { pickScreenshot() } }
+        col.addView(testBtn)
         col.addView(label("Match log", 16f, true))
         logStatus = label("")
         col.addView(logStatus)
@@ -340,6 +348,7 @@ class CoachActivity : Activity() {
         @Suppress("DEPRECATION") super.onActivityResult(requestCode, resultCode, data)
         when (requestCode) {
             REQ_PICK -> data?.data?.let { copyModel(it) }
+            REQ_SHOT -> data?.data?.let { testScreenshot(it) }
             REQ_CAPTURE -> {
                 if (resultCode != RESULT_OK || data == null) { toast("Screen capture wasn't allowed, so the coach didn't start."); return }
                 startForegroundService(Intent(this, ScanService::class.java)
@@ -386,6 +395,63 @@ class CoachActivity : Activity() {
         android.app.AlertDialog.Builder(this).setMessage("Delete all saved lessons? The coach will forget your corrections.")
             .setPositiveButton("Delete") { _, _ -> Lessons.clear(this); refresh() }
             .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun pickScreenshot() {
+        if (!Gemma.isModelReady(this)) { toast("Get the model first (step 1)."); return }
+        if (ScanService.running) { toast("Turn the coach or scanner off first; the model can only run once."); return }
+        @Suppress("DEPRECATION")
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"), REQ_SHOT)
+    }
+
+    /** Runs the whole coach (text reading, board analysis, Gemma) on a saved screenshot. */
+    private fun testScreenshot(uri: Uri) {
+        testBtn.isEnabled = false
+        testBtn.text = "Reading the screenshot…"
+        testExec.execute {
+            try {
+                val bmp = contentResolver.openInputStream(uri)!!.use { android.graphics.BitmapFactory.decodeStream(it) }
+                    .copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+                val text = com.google.android.gms.tasks.Tasks.await(
+                    com.google.mlkit.vision.text.TextRecognition.getClient(com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS)
+                        .process(com.google.mlkit.vision.common.InputImage.fromBitmap(bmp, 0)))
+                val board = BoardReader.board(text, bmp, Matcher(CardDb.load(this)))
+                val prompt = BoardReader.prompt(this, board)
+                val g = testGemma ?: run {
+                    runOnUiThread { testBtn.text = "Loading Gemma (first time ~10-20 s)…" }
+                    Gemma(this).also { it.detailed = Gemma.prefs(this).getString("coach_style", "quick") == "detailed"; it.load(); testGemma = it }
+                }
+                runOnUiThread { testBtn.text = "Thinking…" }
+                val started = System.currentTimeMillis()
+                val done = java.util.concurrent.CountDownLatch(1)
+                var answer = ""; var error: Throwable? = null
+                g.ask(BoardReader.jpeg(bmp, 1024), prompt, { answer = it.trim() }, { done.countDown() }, { error = it; done.countDown() })
+                done.await(180, java.util.concurrent.TimeUnit.SECONDS)
+                val secs = (System.currentTimeMillis() - started) / 1000
+                val warnings = CoachPrompt.check(answer, board)
+                runOnUiThread {
+                    testBtn.isEnabled = true; testBtn.text = "Test on a screenshot"
+                    val body = TextView(this).apply {
+                        setTextIsSelectable(true); textSize = 14f
+                        val pad = (16 * dp).toInt(); setPadding(pad, pad, pad, pad)
+                        text = (error?.let { "Gemma error: ${it.message}" } ?: answer) +
+                            (if (warnings.isEmpty()) "" else "\n\n" + warnings.joinToString("\n") { "⚠ $it" }) +
+                            "\n\n($secs s · ${board.cards.distinctBy { it.first.name }.size} cards read · step ${board.phase.name})" +
+                            "\n\n— What the coach was told —\n$prompt"
+                    }
+                    android.app.AlertDialog.Builder(this).setTitle("Coach answer").setView(ScrollView(this).apply { addView(body) })
+                        .setPositiveButton("Close", null).show()
+                }
+            } catch (t: Throwable) {
+                runOnUiThread { testBtn.isEnabled = true; testBtn.text = "Test on a screenshot"; toast("Couldn't test that image: ${t.message}") }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        testExec.execute { testGemma?.close(); testGemma = null }
+        testExec.shutdown()
+        super.onDestroy()
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
