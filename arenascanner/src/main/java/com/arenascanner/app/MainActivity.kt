@@ -38,6 +38,7 @@ class MainActivity : Activity() {
     private lateinit var dbButton: Button
     private lateinit var scanButton: Button
     private lateinit var summary: TextView
+    private lateinit var autoScrollBox: android.widget.CheckBox
     private val adapter = CardAdapter()
     private val dp get() = resources.displayMetrics.density
 
@@ -98,12 +99,20 @@ class MainActivity : Activity() {
         csvButton.text = "Save CSV"
         clearButton.text = "Clear all"
         debugButton.text = "Save scan image"
+        autoScrollBox = android.widget.CheckBox(this).apply {
+            text = "Auto-scroll the collection while scanning"
+            isChecked = Gemma.prefs(context).getBoolean("auto_scroll", false)
+            setOnCheckedChangeListener { _, on ->
+                Gemma.prefs(context).edit().putBoolean("auto_scroll", on).apply()
+                if (on && AutoScroll.instance == null) explainAccessibility()
+            }
+        }
         val helpToggle = Button(this).apply {
             text = "How to scan ▸"
             setOnClickListener { help.visibility = if (help.visibility == View.GONE) View.VISIBLE else View.GONE
                 text = if (help.visibility == View.GONE) "How to scan ▸" else "How to scan ▾" }
         }
-        for (v in listOf(heading, status, section("Play"), coachButton, section("Collection"), scanButton,
+        for (v in listOf(heading, status, section("Play"), coachButton, section("Collection"), scanButton, autoScrollBox,
             row(exportButton, csvButton), section("More"), row(dbButton, helpToggle), row(clearButton, debugButton), help, summary)) root.addView(v)
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
@@ -122,6 +131,8 @@ class MainActivity : Activity() {
         if (ready && status.text.isNullOrEmpty()) status.text = "Card list ready."
         dbButton.text = if (ready) "Update card list" else "Download card list"
         scanButton.text = if (ScanService.running && !ScanService.coaching) "Stop scanning" else "Start scanning"
+        if (autoScrollBox.isChecked && AutoScroll.instance == null) autoScrollBox.text = "Auto-scroll (needs Accessibility: tap to set up)"
+        else autoScrollBox.text = "Auto-scroll the collection while scanning"
         adapter.items = CollectionStore.all(this)
         adapter.notifyDataSetChanged()
         val copies = adapter.items.sumOf { it.copies }
@@ -241,6 +252,19 @@ class MainActivity : Activity() {
         if (uri == null) { toast("Couldn't save the image."); return }
         contentResolver.openOutputStream(uri)?.use { out -> f.inputStream().use { it.copyTo(out) } }
         toast("Saved to Pictures/ArenaScanner. Send it to Claude if counts look wrong.")
+    }
+
+    /** Auto-scroll needs Arena Scanner switched on under Accessibility (sideloaded apps: allow restricted settings first). */
+    private fun explainAccessibility() {
+        AlertDialog.Builder(this)
+            .setTitle("Turn on auto-scroll")
+            .setMessage("Android only lets apps swipe the screen through Accessibility.\n\n" +
+                "1. Tap Open settings, find \"Arena Scanner auto-scroll\" (under Downloaded apps) and turn it on.\n" +
+                "2. If it's greyed out: Settings → Apps → Arena Scanner → ⋮ menu → Allow restricted settings, then try again.\n\n" +
+                "It only swipes while you're scanning with auto-scroll on.")
+            .setPositiveButton("Open settings") { _, _ -> startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            .setNegativeButton("Later", null)
+            .show()
     }
 
     private fun confirmClear() {

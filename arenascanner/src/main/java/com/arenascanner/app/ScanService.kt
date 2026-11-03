@@ -84,6 +84,14 @@ class ScanService : Service() {
      */
     private val votes = HashMap<String, IntArray>()
     private var found = 0
+
+    // --- auto-scroll (scan mode): swipe, let at least one scan read the new position, swipe again ---
+    private var scrollOn = false
+    @Volatile private var swiping = false
+    private var swipeEndedAt = 0L
+    @Volatile private var scansAfterSwipe = 0
+    private var beforeSwipe: IntArray? = null
+    private var stuck = 0
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
     private val matcher by lazy { Matcher(CardDb.load(this)) }
 
@@ -123,7 +131,10 @@ class ScanService : Service() {
         startCapture(code, data)
         showOverlay()
         running = true
-        if (coachMode) startCoach() else bg.postDelayed(::tick, 1500)
+        if (coachMode) startCoach() else {
+            scrollOn = Gemma.prefs(this).getBoolean("auto_scroll", false) && AutoScroll.instance != null
+            bg.postDelayed(::tick, 1500)
+        }
         return START_NOT_STICKY
     }
 
@@ -199,7 +210,37 @@ class ScanService : Service() {
                 scan(toBitmap(img))
             }
         }
+        if (img != null) autoScroll(img)
         bg.postDelayed(::tick, TICK_MS)
+    }
+
+    /**
+     * One swipe of about two card columns, then wait until a scan has read the new position (and
+     * 0.6 s have passed) before the next. Two swipes in a row that don't move the screen = end of the list.
+     */
+    private fun autoScroll(img: Image) {
+        if (!scrollOn || paused || busy || swiping || scansAfterSwipe < 1) return
+        val now = System.currentTimeMillis()
+        if (now - swipeEndedAt < 600) return
+        val fp = fingerprint(img)
+        beforeSwipe?.let { stuck = if (Settle.diff(it, fp) < 2.0) stuck + 1 else 0 }
+        if (stuck >= 2) {
+            scrollOn = false
+            main.post { flash("Done", hold = 4000); paused = true; overlay?.let { style(it) } }
+            return
+        }
+        val svc = AutoScroll.instance ?: run { scrollOn = false; return }
+        beforeSwipe = fp
+        swiping = true
+        scansAfterSwipe = 0
+        // Between the two card rows (measured from a recording), right to left.
+        val y = height * 0.585f
+        main.post {
+            svc.swipe(width * 0.72f, y, width * 0.47f, 900) { _ ->
+                swipeEndedAt = System.currentTimeMillis()
+                swiping = false
+            }
+        }
     }
 
     /** 18×36 grid of brightness samples, skipping the floating button so it doesn't count as change. */
@@ -226,6 +267,7 @@ class ScanService : Service() {
     private fun scan(bmp: Bitmap) {
         if (isBlack(bmp)) { main.post { flash("Black", hold = 3000) }; return }
         busy = true
+        val afterSwipe = !swiping && System.currentTimeMillis() >= swipeEndedAt
 
         recognizer.process(InputImage.fromBitmap(bmp, 0))
             .addOnSuccessListener { text ->
@@ -250,11 +292,12 @@ class ScanService : Service() {
                     saveDebug(bmp, result)
                     main.post {
                         if (added > 0) flash("+$added")
+                        if (afterSwipe) scansAfterSwipe++
                         busy = false
                     }
                 }
             }
-            .addOnFailureListener { main.post { flash("Error"); busy = false } }
+            .addOnFailureListener { main.post { flash("Error"); if (afterSwipe) scansAfterSwipe++; busy = false } }
     }
 
     /** For each card name found, the copies read from the diamonds above it (null if unreadable). */
@@ -333,7 +376,13 @@ class ScanService : Service() {
                 MotionEvent.ACTION_UP -> if (!moved) {
                     if (e.eventTime - downAt > 600) stopSelf()
                     else if (coachMode) coachTap()
-                    else { paused = !paused; style(btn); btn.text = if (paused) "Paused" else "Auto" }
+                    else {
+                        paused = !paused; style(btn); btn.text = if (paused) "Paused" else "Auto"
+                        // Resuming after "Done" starts auto-scroll again (e.g. after changing the filter).
+                        if (!paused && Gemma.prefs(this).getBoolean("auto_scroll", false) && AutoScroll.instance != null) {
+                            scrollOn = true; stuck = 0; beforeSwipe = null
+                        }
+                    }
                 }
             }
             true
