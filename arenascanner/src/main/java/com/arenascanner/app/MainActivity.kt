@@ -331,12 +331,23 @@ class MainActivity : Activity() {
     /** Card details: rules text from the card list, and a quick way to set how many you own. */
     private fun showCard(o: Owned) {
         val rules = CardDb.load(this).firstOrNull { it.name == o.name }?.rules?.replace(" — ", "\n")
-        AlertDialog.Builder(this)
+        val pad = (20 * dp).toInt()
+        var dialog: AlertDialog? = null
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0)
+            addView(TextView(context).apply { text = rules ?: "No rules text yet. Update the card list."; textSize = 14f })
+            addView(TextView(context).apply { text = "You own ${o.copies}. Set copies:"; setPadding(0, pad / 2, 0, 0); setTypeface(typeface, Typeface.BOLD) })
+            addView(LinearLayout(context).apply {
+                for (n in 1..4) addView(Button(context).apply {
+                    text = "$n"; isEnabled = n != o.copies
+                    setOnClickListener { CollectionStore.setCopies(this@MainActivity, o.name, n); refresh(); dialog?.dismiss() }
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+            })
+        }
+        dialog = AlertDialog.Builder(this)
             .setTitle(o.name)
-            .setMessage((rules ?: "No rules text yet. Update the card list.") + "\n\nYou own ${o.copies}. Set copies:")
-            .setItems(arrayOf("1", "2", "3", "4", "Remove from collection")) { _, i ->
-                CollectionStore.setCopies(this, o.name, if (i == 4) 0 else i + 1); refresh()
-            }
+            .setView(body)
+            .setNeutralButton("Remove") { _, _ -> CollectionStore.setCopies(this, o.name, 0); refresh() }
             .setNegativeButton("Close", null)
             .show()
     }
