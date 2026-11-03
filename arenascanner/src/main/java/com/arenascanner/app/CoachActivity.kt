@@ -34,6 +34,9 @@ class CoachActivity : Activity() {
     private lateinit var pickBtn: Button
     private lateinit var rulesBtn: Button
     private lateinit var startBtn: Button
+    private lateinit var step1: TextView
+    private lateinit var step2: TextView
+    private lateinit var step3: TextView
     private var copying = false
     private var updatingRules = false
     private val dp get() = resources.displayMetrics.density
@@ -62,19 +65,22 @@ class CoachActivity : Activity() {
         col.addView(label("On your turn, tap the floating Coach button. It reads the board and asks Gemma 4 E2B, " +
             "running on your phone, for the best play. Nothing is sent online.").apply { setTextColor(Color.DKGRAY) })
 
-        col.addView(label("1. Model", 16f, true))
+        step1 = label("", 16f, true); col.addView(step1)
         modelStatus = label("")
         downloadBtn = Button(this).apply { setOnClickListener { downloadModel() } }
         pickBtn = Button(this).apply { text = "Use a .litertlm file I already have"; setOnClickListener { pickModel() } }
         for (v in listOf(modelStatus, downloadBtn, pickBtn)) col.addView(v)
 
-        col.addView(label("2. Card rules text", 16f, true))
+        step2 = label("", 16f, true); col.addView(step2)
         rulesStatus = label("")
         rulesBtn = Button(this).apply { text = "Update card list with rules text"; setOnClickListener { updateRules() } }
         col.addView(rulesStatus); col.addView(rulesBtn)
 
-        col.addView(label("3. Play", 16f, true))
-        startBtn = Button(this).apply { setOnClickListener { toggleCoach() } }
+        step3 = label("", 16f, true); col.addView(step3)
+        startBtn = Button(this).apply {
+            textSize = 18f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#6A3FB5"))
+            minHeight = (56 * dp).toInt(); setOnClickListener { toggleCoach() }
+        }
         col.addView(startBtn)
         col.addView(label(
             "Tips:\n" +
@@ -121,6 +127,16 @@ class CoachActivity : Activity() {
         rulesBtn.isEnabled = !updatingRules
 
         startBtn.text = if (ScanService.running && ScanService.coaching) "Stop coach" else "Start coach"
+        val hasRules = CardDb.hasRules(this)
+        step1.text = (if (ready) "✓ " else "1. ") + "Model"
+        step2.text = (if (hasRules) "✓ " else "2. ") + "Card rules text"
+        step3.text = (if (ready && hasRules) "3. Ready — start the coach" else "3. Start")
+        // Hide setup buttons once done (they come back if something is missing).
+        downloadBtn.visibility = if (ready && !copying) android.view.View.GONE else android.view.View.VISIBLE
+        pickBtn.visibility = downloadBtn.visibility
+        rulesBtn.text = if (hasRules) "Refresh rules text (after a new set)" else "Get card rules text"
+        startBtn.isEnabled = ready && CardDb.isReady(this)
+        startBtn.alpha = if (startBtn.isEnabled) 1f else 0.5f
     }
 
     // ------------------------------------------------------------ model download

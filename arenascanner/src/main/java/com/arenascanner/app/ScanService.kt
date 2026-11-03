@@ -394,13 +394,19 @@ class ScanService : Service() {
     private fun readBoard(bmp: Bitmap) {
         recognizer.process(InputImage.fromBitmap(bmp, 0))
             .addOnSuccessListener { text ->
-                val lines = text.textBlocks.flatMap { b -> b.lines.map { it.text } }
-                val cards = lines.mapNotNull { matcher.match(it) }
-                val matched = cards.map { Matcher.normalize(it.name) }.toSet()
+                val all = text.textBlocks.flatMap { it.lines }
+                val lines = all.map { it.text }
+                val mulligan = CoachPrompt.isMulligan(lines)
+                val cards = all.mapNotNull { l ->
+                    val c = matcher.match(l.text) ?: return@mapNotNull null
+                    val cy = (l.boundingBox?.exactCenterY() ?: 0f) / bmp.height
+                    c to CoachPrompt.zoneOf(cy, mulligan)
+                }
+                val matched = cards.map { Matcher.normalize(it.first.name) }.toSet()
                 val other = lines.filter { Matcher.normalize(it) !in matched }
                 val prompt = CoachPrompt.build(cards, other)
                 val image = jpeg(bmp, 1024)
-                showPanel("Thinking… (${cards.distinctBy { it.name }.size} cards read)")
+                showPanel("Thinking… (${cards.distinctBy { it.first.name }.size} cards read)")
                 coachExec.execute { askGemma(image, prompt) }
             }
             .addOnFailureListener { showPanel("Couldn't read the screen: ${it.message}"); coachBusy = false }
@@ -427,14 +433,29 @@ class ScanService : Service() {
         return out.toByteArray()
     }
 
+    /** Bold, coloured "PLAY:" / "WHY:" labels so the answer is quick to scan. */
+    private fun styled(text: String): CharSequence {
+        val sb = android.text.SpannableStringBuilder(text)
+        for ((label, color) in listOf("PLAY:" to "#FFD36B", "WHY:" to "#9EC5FF")) {
+            var i = text.indexOf(label)
+            while (i >= 0) {
+                sb.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), i, i + label.length, 0)
+                sb.setSpan(android.text.style.ForegroundColorSpan(Color.parseColor(color)), i, i + label.length, 0)
+                i = text.indexOf(label, i + 1)
+            }
+        }
+        return sb
+    }
+
     /** Advice panel at the top centre of the screen; tap it to hide. */
     private fun showPanel(text: String) {
         val wm = getSystemService(WindowManager::class.java)
         val d = resources.displayMetrics.density
         val p = panel ?: TextView(this).apply {
-            textSize = 13f
+            textSize = 15f
+            setLineSpacing(0f, 1.15f)
             setTextColor(Color.WHITE)
-            val pad = (12 * d).toInt()
+            val pad = (14 * d).toInt()
             setPadding(pad, pad, pad, pad)
             background = GradientDrawable().apply {
                 cornerRadius = 12 * d
@@ -452,7 +473,7 @@ class ScanService : Service() {
             wm.addView(tv, lp)
             panel = tv
         }
-        p.text = text
+        p.text = styled(text)
         p.visibility = android.view.View.VISIBLE
     }
 

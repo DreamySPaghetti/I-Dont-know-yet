@@ -71,6 +71,7 @@ class MainActivity : Activity() {
         val debugButton = Button(this).apply { text = "Save last scan image"; setOnClickListener { saveDebugImage() } }
         val coachButton = Button(this).apply { text = "Move coach (Gemma, on-device)"; setOnClickListener { startActivity(Intent(this@MainActivity, CoachActivity::class.java)) } }
         val help = TextView(this).apply {
+            visibility = View.GONE
             textSize = 13f
             setTextColor(Color.DKGRAY)
             text = "How to scan: tap Start scanning and allow screen capture. In Arena, open Collection and scroll at a steady, moderate pace. " +
@@ -83,7 +84,27 @@ class MainActivity : Activity() {
         summary = TextView(this).apply { textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, pad / 2) }
         val list = ListView(this).apply { adapter = this@MainActivity.adapter }
 
-        for (v in listOf(heading, status, coachButton, dbButton, scanButton, exportButton, csvButton, clearButton, debugButton, help, summary)) root.addView(v)
+        fun section(t: String) = TextView(this).apply {
+            text = t.uppercase(); textSize = 12f; letterSpacing = 0.08f; setTextColor(Color.parseColor("#5B6678"))
+            setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, pad / 4)
+        }
+        fun row(vararg b: View) = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            for (v in b) addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        coachButton.apply { textSize = 16f; setBackgroundColor(Color.parseColor("#6A3FB5")); setTextColor(Color.WHITE) }
+        scanButton.apply { textSize = 16f; setBackgroundColor(Color.parseColor("#2A63B0")); setTextColor(Color.WHITE) }
+        exportButton.text = "Copy for web page"
+        csvButton.text = "Save CSV"
+        clearButton.text = "Clear all"
+        debugButton.text = "Save scan image"
+        val helpToggle = Button(this).apply {
+            text = "How to scan ▸"
+            setOnClickListener { help.visibility = if (help.visibility == View.GONE) View.VISIBLE else View.GONE
+                text = if (help.visibility == View.GONE) "How to scan ▸" else "How to scan ▾" }
+        }
+        for (v in listOf(heading, status, section("Play"), coachButton, section("Collection"), scanButton,
+            row(exportButton, csvButton), section("More"), row(dbButton, helpToggle), row(clearButton, debugButton), help, summary)) root.addView(v)
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         title = "Arena Scanner"
@@ -99,7 +120,7 @@ class MainActivity : Activity() {
     private fun refresh() {
         val ready = CardDb.isReady(this)
         if (ready && status.text.isNullOrEmpty()) status.text = "Card list ready."
-        dbButton.text = if (ready) "Update card list (after a new set)" else "Download card list"
+        dbButton.text = if (ready) "Update card list" else "Download card list"
         scanButton.text = if (ScanService.running && !ScanService.coaching) "Stop scanning" else "Start scanning"
         adapter.items = CollectionStore.all(this)
         adapter.notifyDataSetChanged()
