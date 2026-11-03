@@ -153,6 +153,20 @@ class CoachPromptTest {
         assertTrue(CoachPrompt.combatFacts(attack)!!.contains("Your Bear 2/2 attacking: dies if blocked by their Ninja 2/2; kills a blocking Ninja 2/2"))
     }
 
+    @Test fun lethalAndDanger() {
+        val flier = CoachPrompt.Fighter("Angel 4/4", 4, 4, setOf("flying"))
+        val bear = CoachPrompt.Fighter("Bear 2/2", 2, 2)
+        val wall = CoachPrompt.Fighter("Wall 0/5", 0, 5)
+        val atk = CoachPrompt.Board(emptyList(), emptyMap(), emptyMap(), 10, 5, CoachPrompt.Phase.ATTACK, emptyList(),
+            fighters = mapOf(Zone.MINE to listOf(flier, bear), Zone.THEIRS to listOf(wall)))
+        // Wall blocks the bear; the flier's 4 gets through: not lethal at 5, lethal at 4.
+        assertTrue(CoachPrompt.combatFacts(atk)!!.contains("at least 4 damage gets through (they're at 5)"))
+        assertTrue(CoachPrompt.combatFacts(atk.copy(lifeOpp = 4))!!.contains("LETHAL"))
+        val blk = atk.copy(phase = CoachPrompt.Phase.BLOCK, lifeYou = 3,
+            fighters = mapOf(Zone.MINE to listOf(wall), Zone.THEIRS to listOf(flier)))
+        assertTrue(CoachPrompt.combatFacts(blk)!!.contains("DANGER: their creatures have 4 power and you're at 3"))
+    }
+
     @Test fun attackMath() {
         val b = CoachPrompt.Board(emptyList(), emptyMap(), mapOf(Zone.MINE to listOf("5/3", "1/1"), Zone.THEIRS to listOf("2/2", "0/5")),
             null, null, CoachPrompt.Phase.ATTACK, emptyList())

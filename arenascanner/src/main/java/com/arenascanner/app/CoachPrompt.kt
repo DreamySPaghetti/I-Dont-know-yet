@@ -328,7 +328,39 @@ object CoachPrompt {
             }
             else -> return null
         }
+        lethalNote(b, mine, theirs)?.let { sb.append(it).append('\n') }
         return sb.toString()
+    }
+
+    /**
+     * Race math. My turn: damage that gets through if everything attacks and they block my biggest
+     * blockable attackers one each. Blocking: their total power against my life.
+     */
+    fun lethalNote(b: Board, mine: List<Fighter>, theirs: List<Fighter>): String? = when (b.phase) {
+        Phase.ATTACK, Phase.MAIN1 -> {
+            val attackers = mine.filter { it.p > 0 && "defender" !in it.kw }
+            val evasive = attackers.filter { a -> theirs.none { canBlock(it, a) } }
+            val blockable = (attackers - evasive.toSet()).sortedByDescending { it.p }
+            val through = evasive.sumOf { it.p } + blockable.drop(theirs.size).sumOf { it.p }
+            val life = b.lifeOpp
+            when {
+                attackers.isEmpty() -> null
+                life != null && through >= life ->
+                    "- LETHAL: even if they block your biggest attackers, at least $through damage gets through and they're at $life. Attack with everything."
+                life != null -> "- If everything attacks, at least $through damage gets through (they're at $life)."
+                else -> null
+            }
+        }
+        Phase.BLOCK -> {
+            val total = theirs.sumOf { it.p }
+            val life = b.lifeYou
+            when {
+                life == null || total == 0 -> null
+                total >= life -> "- DANGER: their creatures have $total power and you're at $life. Not blocking could lose the game; block to survive."
+                else -> "- Their creatures have $total power in total; you're at $life."
+            }
+        }
+        else -> null
     }
 
     /** Second try after [check] found problems: same board, plus what was wrong with the first answer. */
