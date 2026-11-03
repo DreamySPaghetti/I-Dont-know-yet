@@ -90,6 +90,11 @@ class ScanService : Service() {
      * most often, so a single misread frame can't change it.
      */
     private val votes = HashMap<String, IntArray>()
+    // Nothing to read while the screen is off: skip scanning/polling (saves battery).
+    @Volatile private var screenOn = true
+    private val screenReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: android.content.Context?, i: Intent?) { screenOn = i?.action != Intent.ACTION_SCREEN_OFF }
+    }
     private var found = 0
     private var updatedTotal = 0
 
@@ -137,6 +142,7 @@ class ScanService : Service() {
             else @Suppress("DEPRECATION") intent?.getParcelableExtra(EXTRA_DATA)
         if (data == null) { stopSelf(); return START_NOT_STICKY }
         startCapture(code, data)
+        registerReceiver(screenReceiver, android.content.IntentFilter().apply { addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_SCREEN_ON) })
         showOverlay()
         running = true
         if (coachMode) startCoach() else {
@@ -209,6 +215,7 @@ class ScanService : Service() {
     /** Runs on the bg thread every [TICK_MS]: whenever no scan is running, scan the frame if it's new. */
     private fun tick() {
         if (!running) return
+        if (!screenOn) { bg.postDelayed(::tick, 1000); return }
         if (++ticks % 8 == 0) matchRotation() // backup in case a rotation callback was missed
         val img = latest
         if (img != null && !paused && !busy) {
@@ -374,6 +381,8 @@ class ScanService : Service() {
             minWidth = (58 * d).toInt(); minHeight = (58 * d).toInt()
         }
         style(btn)
+        btn.contentDescription = if (coachMode) "Move coach. Tap for advice, long-press to turn off, drag to move."
+            else "Collection scanner. Tap to pause or resume, long-press to stop, drag to move."
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -470,7 +479,7 @@ class ScanService : Service() {
     private fun poll() {
         if (!running) return
         val img = latest
-        if (img != null && !coachBusy && !polling) {
+        if (img != null && !coachBusy && !polling && screenOn) {
             polling = true
             // Half resolution is plenty for Arena's big button and prompt text, and ~4x cheaper to read.
             val f = copyFrame(img)
@@ -755,6 +764,7 @@ class ScanService : Service() {
             "Scan finished: $found new cards, $updatedTotal counts updated.", android.widget.Toast.LENGTH_LONG).show()
         running = false
         coaching = false
+        runCatching { unregisterReceiver(screenReceiver) }
         overlay?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
         overlay = null
         panelBox?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }

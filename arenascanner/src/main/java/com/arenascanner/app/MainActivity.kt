@@ -38,6 +38,7 @@ class MainActivity : Activity() {
     private lateinit var dbButton: Button
     private lateinit var scanButton: Button
     private lateinit var summary: TextView
+    private lateinit var updateButton: Button
     private var query = ""
     private var rarityFilter: String? = null
     private lateinit var autoScrollBox: android.widget.CheckBox
@@ -67,6 +68,11 @@ class MainActivity : Activity() {
         }
 
         status = TextView(this).apply { textSize = 14f }
+        updateButton = Button(this).apply {
+            visibility = View.GONE
+            setBackgroundColor(Color.parseColor("#1F7A4D")); setTextColor(Color.WHITE)
+            setOnClickListener { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Updates.APK_URL))) }
+        }
         dbButton = Button(this).apply { setOnClickListener { downloadCards() } }
         scanButton = Button(this).apply { setOnClickListener { toggleScan() } }
         val exportButton = Button(this).apply { text = "Export to collection page"; setOnClickListener { export() } }
@@ -137,7 +143,7 @@ class MainActivity : Activity() {
             setOnClickListener { help.visibility = if (help.visibility == View.GONE) View.VISIBLE else View.GONE
                 text = if (help.visibility == View.GONE) "How to scan ▸" else "How to scan ▾" }
         }
-        for (v in listOf(heading, status, section("Play"), coachButton, deckButton, section("Collection"), scanButton, autoScrollBox,
+        for (v in listOf(heading, status, updateButton, section("Play"), coachButton, deckButton, section("Collection"), scanButton, autoScrollBox,
             row(exportButton, csvButton), section("More"), row(dbButton, helpToggle), row(clearButton, debugButton), row(importButton, aboutButton), help, summary, row(search, rarity))) root.addView(v)
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
@@ -149,6 +155,13 @@ class MainActivity : Activity() {
         refresh()
         offerCrashReport()
         firstRunIntro()
+        io.execute {
+            val newer = runCatching { Updates.check(this) }.getOrNull()
+            if (newer != null) runOnUiThread {
+                updateButton.text = "Update available (build $newer): tap to download, then open it to install"
+                updateButton.visibility = View.VISIBLE
+            }
+        }
         // First launch: fetch the card list right away, since scanning needs it.
         if (!CardDb.isReady(this)) downloadCards()
     }
@@ -167,7 +180,8 @@ class MainActivity : Activity() {
         adapter.items = all.filter { (query.isEmpty() || query in it.name.lowercase()) && (rarityFilter == null || it.rarity == rarityFilter) }
         adapter.notifyDataSetChanged()
         val by = all.groupingBy { it.rarity }.eachCount()
-        summary.text = "Your collection: ${all.size} cards, ${all.sumOf { it.copies }} copies\n" +
+        summary.text = if (all.isEmpty()) "No cards yet. Tap Start scanning, then open Collection in MTG Arena." else
+            "Your collection: ${all.size} cards, ${all.sumOf { it.copies }} copies\n" +
             "Mythic ${by["M"] ?: 0} · Rare ${by["R"] ?: 0} · Uncommon ${by["U"] ?: 0} · Common ${by["C"] ?: 0}" +
             if (adapter.items.size != all.size) "\nShowing ${adapter.items.size}" else ""
     }
