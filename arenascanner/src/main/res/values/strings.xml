@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="autoscroll_description">Lets Arena Scanner swipe through your MTG Arena collection while it scans. It only swipes while scanning with auto-scroll on, and reads nothing else.</string>
+    <color name="launcher_bg">#2A63B0</color>
 </resources>

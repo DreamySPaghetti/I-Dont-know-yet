@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original mark: a card inside scanner brackets, with four copy diamonds. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFF" android:strokeWidth="4" android:strokeLineCap="round"
+        android:pathData="M30,40 L30,30 L40,30 M68,30 L78,30 L78,40 M78,68 L78,78 L68,78 M40,78 L30,78 L30,68" />
+    <path android:fillColor="#FFFFFF" android:pathData="M42,40 h24 a3,3 0 0 1 3,3 v26 a3,3 0 0 1 -3,3 h-24 a3,3 0 0 1 -3,-3 v-26 a3,3 0 0 1 3,-3 z" />
+    <path android:fillColor="#2A63B0" android:pathData="M44,44 h20 v4 h-20 z" />
+    <path android:fillColor="#2A63B0" android:pathData="M45,60 l3,-3 l3,3 l-3,3 z M51,60 l3,-3 l3,3 l-3,3 z M57,60 l3,-3 l3,3 l-3,3 z" />
+    <path android:fillColor="#00000000" android:strokeColor="#2A63B0" android:strokeWidth="1" android:pathData="M63,60 l3,-3 l3,3 l-3,3 z" />
+</vector>

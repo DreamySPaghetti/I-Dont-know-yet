@@ -127,13 +127,14 @@ class MainActivity : Activity() {
                 if (on && AutoScroll.instance == null) explainAccessibility()
             }
         }
+        val aboutButton = Button(this).apply { text = "About & privacy"; setOnClickListener { startActivity(Intent(this@MainActivity, AboutActivity::class.java)) } }
         val helpToggle = Button(this).apply {
             text = "How to scan ▸"
             setOnClickListener { help.visibility = if (help.visibility == View.GONE) View.VISIBLE else View.GONE
                 text = if (help.visibility == View.GONE) "How to scan ▸" else "How to scan ▾" }
         }
         for (v in listOf(heading, status, section("Play"), coachButton, deckButton, section("Collection"), scanButton, autoScrollBox,
-            row(exportButton, csvButton), section("More"), row(dbButton, helpToggle), row(clearButton, debugButton), help, summary, row(search, rarity))) root.addView(v)
+            row(exportButton, csvButton), section("More"), row(dbButton, helpToggle), row(clearButton, debugButton), row(aboutButton), help, summary, row(search, rarity))) root.addView(v)
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         title = "Arena Scanner"
@@ -142,13 +143,18 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         refresh()
+        offerCrashReport()
+        firstRunIntro()
         // First launch: fetch the card list right away, since scanning needs it.
         if (!CardDb.isReady(this)) downloadCards()
     }
 
     private fun refresh() {
         val ready = CardDb.isReady(this)
-        if (ready && status.text.isNullOrEmpty()) status.text = "Card list ready."
+        if (ready && status.text.isNullOrEmpty()) {
+            val days = CardDb.ageDays(this)
+            status.text = if (days >= 30) "Card list is $days days old. If a new set is out, tap Update card list." else "Card list ready."
+        }
         dbButton.text = if (ready) "Update card list" else "Download card list"
         scanButton.text = if (ScanService.running && !ScanService.coaching) "Stop scanning" else "Start scanning"
         if (autoScrollBox.isChecked && AutoScroll.instance == null) autoScrollBox.text = "Auto-scroll (needs Accessibility: tap to set up)"
@@ -275,6 +281,38 @@ class MainActivity : Activity() {
         if (uri == null) { toast("Couldn't save the image."); return }
         contentResolver.openOutputStream(uri)?.use { out -> f.inputStream().use { it.copyTo(out) } }
         toast("Saved to Pictures/ArenaScanner. Send it to Claude if counts look wrong.")
+    }
+
+    /** After a crash: offer to share the report (plain text in the share sheet), then forget it. */
+    private fun offerCrashReport() {
+        val f = App.crashFile(this)
+        if (!f.exists() || f.length() == 0L) return
+        val report = f.readText()
+        f.delete()
+        AlertDialog.Builder(this)
+            .setTitle("Arena Scanner stopped last time")
+            .setMessage("Send the crash report so it can be fixed? It contains only the error and your phone model.")
+            .setPositiveButton("Send") { _, _ ->
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(Intent.EXTRA_SUBJECT, "Arena Scanner crash report").putExtra(Intent.EXTRA_TEXT, report), "Send crash report"))
+            }
+            .setNegativeButton("Not now", null)
+            .show()
+    }
+
+    /** One-time intro to the three things the app does. */
+    private fun firstRunIntro() {
+        val prefs = Gemma.prefs(this)
+        if (prefs.getBoolean("intro_seen", false)) return
+        prefs.edit().putBoolean("intro_seen", true).apply()
+        AlertDialog.Builder(this)
+            .setTitle("Welcome to Arena Scanner")
+            .setMessage("1. Scan: open your Arena collection and let it read every card and how many copies you own.\n\n" +
+                "2. Deck check: paste a deck from Arena to see what's missing and the wildcards it costs.\n\n" +
+                "3. Move coach: an AI on your phone suggests plays during a game.\n\n" +
+                "Everything stays on your phone. Start by tapping Start scanning.")
+            .setPositiveButton("Got it", null)
+            .show()
     }
 
     /** Auto-scroll needs Arena Scanner switched on under Accessibility (sideloaded apps: allow restricted settings first). */

@@ -472,6 +472,9 @@ class ScanService : Service() {
                 .addOnSuccessListener { t ->
                     val phase = CoachPrompt.phaseOf(t.textBlocks.flatMap { b -> b.lines.map { it.text } })
                     val decision = phase in setOf(CoachPrompt.Phase.MAIN1, CoachPrompt.Phase.BLOCK, CoachPrompt.Phase.ATTACK, CoachPrompt.Phase.MULLIGAN)
+                    // The turn moved on: old advice no longer applies.
+                    if (phase != CoachPrompt.Phase.UNKNOWN && phase != lastAutoPhase && !coachBusy && fixBox == null)
+                        panelBox?.visibility = android.view.View.GONE
                     if (decision && phase != lastAutoPhase && !coachBusy && fixBox == null) coachTap()
                     // Remember the step; a different step (e.g. the opponent's turn) re-arms it for next time.
                     if (phase != CoachPrompt.Phase.UNKNOWN) lastAutoPhase = phase

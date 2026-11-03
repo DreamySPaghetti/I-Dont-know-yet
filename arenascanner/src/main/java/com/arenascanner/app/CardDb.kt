@@ -20,6 +20,10 @@ object CardDb {
 
     fun isReady(ctx: Context) = cached != null || file(ctx).exists()
 
+    /** Days since the card list was downloaded (new sets need an update). */
+    fun ageDays(ctx: Context): Int =
+        if (!file(ctx).exists()) 0 else ((System.currentTimeMillis() - file(ctx).lastModified()) / 86_400_000L).toInt()
+
     fun load(ctx: Context): List<Card> {
         cached?.let { return it }
         val f = file(ctx)
