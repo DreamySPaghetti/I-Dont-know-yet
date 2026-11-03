@@ -146,7 +146,10 @@ object CoachPrompt {
 
     private val STACK = Regex("^[xX×]\\s?(\\d{1,2})$")
 
-    fun analyze(lines: List<Seen>, match: (String) -> Card?): Board {
+    fun analyze(lines: List<Seen>, matchRaw: (String) -> Card?): Board {
+        // Each line is looked up several times below; fuzzy matching isn't free, so remember results.
+        val memo = HashMap<String, Card?>()
+        val match = { t: String -> memo.getOrPut(t) { matchRaw(t) } }
         val texts = lines.map { it.text }
         val phase = phaseOf(texts)
         val mull = phase == Phase.MULLIGAN
@@ -274,7 +277,8 @@ object CoachPrompt {
             for ((k, v) in kw) sb.append("- ").append(k).append(": ").append(v).append('\n')
             sb.append('\n')
         }
-        val other = board.other.map { it.trim() }.filter { it.length in 1..40 }.distinct().joinToString(" | ").take(400)
+        // Only short UI labels (buttons, prompts); longer fragments are rules text the cards already cover.
+        val other = board.other.map { it.trim() }.filter { it.length in 2..24 && it.any(Char::isLetter) }.distinct().joinToString(" | ").take(220)
         if (other.isNotEmpty()) sb.append("Other text on screen (buttons, prompts): ").append(other).append("\n\n")
         if (lessons.isNotEmpty()) {
             sb.append("Lessons from my past games in similar spots (I confirmed these plays; follow them when they fit):\n")

@@ -58,13 +58,20 @@ class ScanService : Service() {
         private const val CHANNEL = "scan"
         private const val TICK_MS = 120L
         @Volatile var running = false
-        fun debugFile(ctx: android.content.Context) = File(ctx.filesDir, "last_scan.png")
+        fun debugFile(ctx: android.content.Context) = File(ctx.filesDir, "last_scan.jpg")
+        private const val DEBUG_EVERY_MS = 5000L
     }
 
     private val main = Handler(Looper.getMainLooper())
     private lateinit var bgThread: HandlerThread
     private lateinit var bg: Handler
     private val debugWriter = Executors.newSingleThreadExecutor()
+    // Reused buffers: a scan used to allocate ~20 MB of bitmaps and pixel arrays, several times a second.
+    private var frameBuf: Bitmap? = null   // padded copy of the latest frame (bg thread only)
+    private var scanBmp: Bitmap? = null    // frame used by the running scan (one scan at a time: busy)
+    private var pxBuf: IntArray? = null    // its pixels, for reading the diamonds
+    private var lastDebugAt = 0L
+    private val debugPending = java.util.concurrent.atomic.AtomicBoolean(false)
     private var projection: MediaProjection? = null
     private var display: VirtualDisplay? = null
     private var reader: ImageReader? = null
@@ -207,7 +214,7 @@ class ScanService : Service() {
             val fp = fingerprint(img)
             if (settle.offer(fp)) {
                 settle.scanned(fp)
-                scan(toBitmap(img))
+                scan(scanBitmap(img))
             }
         }
         if (img != null) autoScroll(img)
@@ -304,7 +311,7 @@ class ScanService : Service() {
     private fun countPips(bmp: Bitmap, hits: List<Pair<Card, Box>>): List<Triple<Card, Box, PipRead>> {
         if (hits.isEmpty()) return emptyList()
         val w = bmp.width; val h = bmp.height
-        val px = IntArray(w * h)
+        val px = pxBuf?.takeIf { it.size == w * h } ?: IntArray(w * h).also { pxBuf = it }
         bmp.getPixels(px, 0, w, 0, 0, w, h)
         val luma = { x: Int, y: Int ->
             val p = px[y * w + x]
@@ -322,6 +329,10 @@ class ScanService : Service() {
 
     /** Saves the last scanned screen with what was read drawn on it, for "Save last scan image". */
     private fun saveDebug(bmp: Bitmap, result: List<Triple<Card, Box, PipRead>>) {
+        // At most every 5 s and never two at once: writing a full-screen image is the costliest step.
+        val now = System.currentTimeMillis()
+        if (result.isEmpty() || now - lastDebugAt < DEBUG_EVERY_MS || !debugPending.compareAndSet(false, true)) return
+        lastDebugAt = now
         val copy = bmp.copy(Bitmap.Config.ARGB_8888, true)
         val cardW = Layout.cardWidth(result.map { it.second }, copy.width, copy.height)
         val r = (Layout.PIP_RADIUS * cardW).toFloat()
@@ -337,8 +348,9 @@ class ScanService : Service() {
                 val (x0, y0) = read.slots.first()
                 cv.drawText(read.count?.toString() ?: "?", x0 - r, y0 - r - 8f, label)
             }
-            runCatching { debugFile(this).outputStream().use { copy.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+            runCatching { debugFile(this).outputStream().use { copy.compress(Bitmap.CompressFormat.JPEG, 90, it) } }
             copy.recycle()
+            debugPending.set(false)
         }
     }
 
@@ -446,7 +458,9 @@ class ScanService : Service() {
         val img = latest
         if (img != null && !coachBusy && !polling) {
             polling = true
-            val bmp = toBitmap(img)
+            // Half resolution is plenty for Arena's big button and prompt text, and ~4x cheaper to read.
+            val f = copyFrame(img)
+            val bmp = Bitmap.createScaledBitmap(f, f.width / 2, f.height / 2, true)
             recognizer.process(InputImage.fromBitmap(bmp, 0))
                 .addOnSuccessListener { t ->
                     val phase = CoachPrompt.phaseOf(t.textBlocks.flatMap { b -> b.lines.map { it.text } })
@@ -651,14 +665,27 @@ class ScanService : Service() {
         panelBox?.visibility = android.view.View.VISIBLE
     }
 
-    private fun toBitmap(img: Image): Bitmap {
+    /** Copies the frame into the reused padded buffer (rows can be wider than the screen). bg thread only. */
+    private fun copyFrame(img: Image): Bitmap {
         val plane = img.planes[0]
-        val pixelStride = plane.pixelStride
-        val rowPadding = plane.rowStride - pixelStride * img.width
-        val padded = Bitmap.createBitmap(img.width + rowPadding / pixelStride, img.height, Bitmap.Config.ARGB_8888)
+        val pw = plane.rowStride / plane.pixelStride
+        val b = frameBuf?.takeIf { it.width == pw && it.height == img.height }
+            ?: Bitmap.createBitmap(pw, img.height, Bitmap.Config.ARGB_8888).also { frameBuf = it }
         plane.buffer.rewind()
-        padded.copyPixelsFromBuffer(plane.buffer)
-        return if (rowPadding == 0) padded else Bitmap.createBitmap(padded, 0, 0, img.width, img.height)
+        b.copyPixelsFromBuffer(plane.buffer)
+        return b
+    }
+
+    /** A fresh screen-sized copy, for the coach (it keeps the image while Gemma works). */
+    private fun toBitmap(img: Image): Bitmap = Bitmap.createBitmap(copyFrame(img), 0, 0, img.width, img.height)
+
+    /** The scan's screen-sized bitmap, reused between scans (only one scan runs at a time). */
+    private fun scanBitmap(img: Image): Bitmap {
+        val f = copyFrame(img)
+        val s = scanBmp?.takeIf { it.width == img.width && it.height == img.height }
+            ?: Bitmap.createBitmap(img.width, img.height, Bitmap.Config.ARGB_8888).also { scanBmp = it }
+        Canvas(s).drawBitmap(f, 0f, 0f, null)
+        return s
     }
 
     private fun isBlack(b: Bitmap): Boolean {

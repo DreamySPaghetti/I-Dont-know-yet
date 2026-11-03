@@ -244,8 +244,8 @@ class MainActivity : Activity() {
         val f = ScanService.debugFile(this)
         if (!f.exists()) { toast("No scan yet. Scan a page of your collection first."); return }
         val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, "arena_scan_${System.currentTimeMillis()}.png")
-            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.DISPLAY_NAME, "arena_scan_${System.currentTimeMillis()}.jpg")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
             put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/ArenaScanner")
         }
         val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)

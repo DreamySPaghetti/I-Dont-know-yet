@@ -11,6 +11,8 @@ import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.SamplerConfig
+import com.google.ai.edge.litertlm.SpeculativeDecodingConfig
+import com.google.ai.edge.litertlm.SpeculativeDecodingMode
 import java.io.File
 import java.util.concurrent.Executors
 
@@ -49,30 +51,40 @@ class Gemma(private val ctx: Context) : AutoCloseable {
      */
     fun load() {
         val path = modelFile(ctx).absolutePath
+        // Speculative decoding (Gemma 4's built-in drafter) speeds up writing the answer; ADAPTIVE only
+        // uses it while it's actually faster. Files without a drafter fail that attempt and fall through.
+        val spec = SpeculativeDecodingConfig(SpeculativeDecodingMode.ADAPTIVE)
         val attempts = listOf(
-            Triple("GPU", Backend.GPU(), Backend.GPU()),
-            Triple("CPU + GPU vision", Backend.CPU(), Backend.GPU()),
-            Triple("CPU", Backend.CPU(), Backend.CPU()),
+            Attempt("GPU + speculative", Backend.GPU(), Backend.GPU(), spec),
+            Attempt("GPU", Backend.GPU(), Backend.GPU(), null),
+            Attempt("CPU + GPU vision", Backend.CPU(), Backend.GPU(), null),
+            Attempt("CPU", Backend.CPU(), Backend.CPU(), null),
         )
         var last: Throwable? = null
-        for ((name, main, vision) in attempts) {
+        for ((name, main, vision, specCfg) in attempts) {
+            var e: Engine? = null
             try {
-                val e = Engine(
+                e = Engine(
                     EngineConfig(
                         modelPath = path,
                         backend = main,
                         visionBackend = vision,
-                        audioBackend = Backend.CPU(),
+                        audioBackend = null, // never used; skipping it saves memory next to Arena
                         maxNumTokens = 4096,
+                        maxNumImages = 1,
                         cacheDir = ctx.cacheDir.path,
+                        speculativeDecodingConfig = specCfg,
                     )
                 )
                 e.initialize()
                 engine = e
                 backendName = name
+                warmUp()
                 return
             } catch (t: Throwable) {
                 last = t
+                runCatching { e?.close() } // free the failed attempt's memory before the next one
+                engine = null
             }
         }
         throw IllegalStateException("Couldn't start Gemma: ${last?.message}", last)
@@ -90,6 +102,8 @@ class Gemma(private val ctx: Context) : AutoCloseable {
                     systemInstruction = Contents.of(listOf(Content.Text(CoachPrompt.SYSTEM))),
                     // Low temperature: the same board should get the same advice.
                     samplerConfig = SamplerConfig(topK = 40, topP = 0.9, temperature = 0.3),
+                    // PLAY + WHY fit easily; a cap stops a rambling answer from holding up the next one.
+                    maxOutputToken = 200,
                 )
             )
         } catch (t: Throwable) {
@@ -114,6 +128,20 @@ class Gemma(private val ctx: Context) : AutoCloseable {
                 onError(throwable)
             }
         }, emptyMap())
+    }
+
+    private data class Attempt(val name: String, val main: Backend, val vision: Backend, val spec: SpeculativeDecodingConfig?)
+
+    /**
+     * One tiny question at load time so the GPU programs for both the image and text paths are
+     * built now (part of the 10 s "Loading") instead of slowing down the first real answer.
+     */
+    private fun warmUp() {
+        val bmp = android.graphics.Bitmap.createBitmap(64, 64, android.graphics.Bitmap.Config.ARGB_8888)
+        val jpg = java.io.ByteArrayOutputStream().also { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, it) }.toByteArray()
+        val done = java.util.concurrent.CountDownLatch(1)
+        runCatching { ask(jpg, "Reply with OK.", {}, { done.countDown() }, { done.countDown() }) }.onFailure { done.countDown() }
+        done.await(30, java.util.concurrent.TimeUnit.SECONDS)
     }
 
     override fun close() {
