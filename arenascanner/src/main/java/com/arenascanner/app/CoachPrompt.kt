@@ -275,7 +275,7 @@ object CoachPrompt {
     /** Mana value from the rules line's cost, e.g. "{2}{G}{G}" = 4; null if the card has no cost. */
     fun manaValue(c: Card): Int? {
         val cost = c.rules.split(" — ").firstOrNull()?.takeIf { it.startsWith("{") } ?: return null
-        return Regex("\\{([^}]+)}").findAll(cost).sumOf { m -> m.groupValues[1].toIntOrNull() ?: if (m.groupValues[1] == "X") 0 else 1 }
+        return Regex("\\{([^\\}]+)\\}") /* braces escaped: Android's ICU regex rejects a bare } */.findAll(cost).sumOf { m -> m.groupValues[1].toIntOrNull() ?: if (m.groupValues[1] == "X") 0 else 1 }
     }
 
     fun isLand(c: Card) = c.rules.split(" — ").take(2).any { Regex("\\bLand\\b").containsMatchIn(it) }

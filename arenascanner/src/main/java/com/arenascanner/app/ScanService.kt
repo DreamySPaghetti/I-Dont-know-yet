@@ -525,7 +525,7 @@ class ScanService : Service() {
 
     private fun readBoard(bmp: Bitmap) {
         recognizer.process(InputImage.fromBitmap(bmp, 0))
-            .addOnSuccessListener { text ->
+            .addOnSuccessListener { text -> try {
                 val board = BoardReader.board(text, bmp, matcher)
                 val cards = board.cards
                 val prompt = BoardReader.prompt(this, board)
@@ -534,7 +534,11 @@ class ScanService : Service() {
                 lastFull = jpeg(bmp, 1600); lastTime = System.currentTimeMillis()
                 showPanel("Thinking… (${cards.distinctBy { it.first.name }.size} cards read)")
                 coachExec.execute { askGemma(image, prompt) }
-            }
+            } catch (t: Throwable) {
+                // A bug while reading the board shouldn't close the app: report it in the panel and keep going.
+                showPanel("Coach error: ${t.javaClass.simpleName}: ${t.message}\nTap Coach to try again, and send this to Claude.")
+                coachBusy = false
+            } }
             .addOnFailureListener { showPanel("Couldn't read the screen: ${it.message}"); coachBusy = false }
     }
 
