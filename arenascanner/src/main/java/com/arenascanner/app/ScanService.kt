@@ -516,13 +516,15 @@ class ScanService : Service() {
                 val secs = (System.currentTimeMillis() - started) / 1000
                 val used = Regex("Lessons from my past games").containsMatchIn(prompt)
                 val b = lastBoard
+                val warnings = b?.let { CoachPrompt.check(lastAnswer, it) }.orEmpty()
                 runCatching {
                     CoachLog.add(this, lastTime, lastFull, org.json.JSONObject()
                         .put("phase", b?.phase?.name).put("seconds", secs).put("backend", gemma?.backendName)
-                        .put("board", b?.let { CoachPrompt.summary(it) }).put("prompt", prompt).put("answer", lastAnswer))
+                        .put("board", b?.let { CoachPrompt.summary(it) }).put("prompt", prompt).put("answer", lastAnswer).put("warnings", org.json.JSONArray(warnings)))
                 }
                 main.post {
-                    panel?.let { it.text = styled("$lastAnswer\n\n(${secs}s${if (used) " · used your past lessons" else ""} · saved to match log)") }
+                    val warn = if (warnings.isEmpty()) "" else "\n\n" + warnings.joinToString("\n") { "⚠ $it" }
+                    panel?.let { it.text = styled("$lastAnswer$warn\n\n(${secs}s${if (used) " · used your past lessons" else ""} · saved to match log)") }
                     actions?.visibility = android.view.View.VISIBLE
                     coachBusy = false
                 }

@@ -81,6 +81,33 @@ class CoachPromptTest {
         assertEquals(0f, none, 0.001f)
     }
 
+    /** From the match log: hand collapsed, "Negate" (instant) at the same height as battlefield lands. */
+    @Test fun spellsAreNeverOnTheBattlefieldAndStacksCount() {
+        val negate = Card("Negate", "C", rules = "{1}{U} — Instant — Counter target noncreature spell.")
+        val turtle = Card("Aegis Turtle", "C", rules = "{U} — Creature — Turtle — 0/5")
+        val m = { t: String -> listOf(negate, turtle).firstOrNull { it.name == t } }
+        val b = CoachPrompt.analyze(listOf(
+            Seen("Aegis Turtle", 0.58f, 0.50f, 0.007f),
+            Seen("x4", 0.09f, 0.70f, 0.012f),
+            Seen("Island", 0.107f, 0.67f, 0.007f),
+            Seen("Negate", 0.47f, 0.70f, 0.009f),
+            Seen("To Combat", 0.88f, 0.98f, 0.015f),
+        ), m)
+        assertTrue(b.cards.contains(negate to Zone.HAND))
+        assertTrue(b.cards.contains(turtle to Zone.MINE))
+        assertEquals(mapOf("Island" to 4), b.lands[Zone.MINE])
+        val p = CoachPrompt.build(b)
+        assertTrue(p.contains("never cast or play these again): Aegis Turtle"))
+    }
+
+    @Test fun warnsAboutCastingWhatIsInPlayAndTwoLands() {
+        val turtle = Card("Aegis Turtle", "C", rules = "{U} — Creature — Turtle — 0/5")
+        val b = CoachPrompt.Board(listOf(turtle to Zone.MINE), emptyMap(), emptyMap(), null, null, CoachPrompt.Phase.MAIN1, emptyList())
+        assertEquals(listOf("Aegis Turtle is already on your battlefield."), CoachPrompt.check("PLAY: Cast Aegis Turtle.\nWHY: x", b))
+        assertTrue(CoachPrompt.check("PLAY: Attack with Aegis Turtle.", b).isEmpty())
+        assertEquals(listOf("You can only play one land per turn."), CoachPrompt.check("PLAY: Play the basic Island and the basic Island.", b))
+    }
+
     @Test fun typeLineIsNotACard() {
         val b = CoachPrompt.analyze(listOf(Seen("Basic Land - Plains", 0.3f, 0.8f, 0.012f)), match)
         assertTrue(b.cards.isEmpty())

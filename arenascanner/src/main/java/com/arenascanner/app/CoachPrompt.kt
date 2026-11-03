@@ -133,12 +133,18 @@ object CoachPrompt {
      * Zone from screen position (landscape Arena): the opponent's half is above 44 % of the height.
      * On my half, hand cards are drawn large, so their names are taller than names on the battlefield.
      */
-    fun zoneOf(s: Seen, mulligan: Boolean) = when {
+    fun zoneOf(s: Seen, mulligan: Boolean, handH: Float = 0f) = when {
         mulligan -> Zone.OPENING
         s.cy < 0.44f -> Zone.THEIRS
-        s.cy > 0.62f && s.h >= 0.011f -> Zone.HAND
+        // Hand names are the biggest card names on my side; battlefield names are about half their size.
+        s.cy > 0.6f && s.h >= maxOf(0.010f, 0.75f * handH) -> Zone.HAND
         else -> Zone.MINE
     }
+
+    /** Instants and sorceries never stay on the battlefield. */
+    fun isSpell(c: Card) = c.rules.split(" — ").take(2).any { "Instant" in it || "Sorcery" in it }
+
+    private val STACK = Regex("^[xX×]\\s?(\\d{1,2})$")
 
     fun analyze(lines: List<Seen>, match: (String) -> Card?): Board {
         val texts = lines.map { it.text }
@@ -153,17 +159,28 @@ object CoachPrompt {
         val playable = mutableSetOf<String>()
         val notPlayable = mutableSetOf<String>()
         var measured = false
+        val handH = lines.filter { it.cy > 0.6f && (Matcher.normalize(it.text) in BASIC || match(it.text.trim()) != null) }
+            .maxOfOrNull { it.h } ?: 0f
+        // Arena shows "x4" on a stack of identical lands.
+        val stacks = lines.mapNotNull { s -> STACK.find(s.text.trim())?.let { s to it.groupValues[1].toInt() } }
         for (s in lines) {
             val t = s.text.trim()
             val norm = Matcher.normalize(t)
-            val zone = zoneOf(s, mull)
+            var zone = zoneOf(s, mull, handH)
+            if (zone == Zone.MINE && match(t)?.let { isSpell(it) } == true) zone = Zone.HAND
             if (zone == Zone.HAND && s.glow >= 0f && (norm in BASIC || match(t) != null)) {
                 measured = true
                 val name = if (norm in BASIC) t.replaceFirstChar { it.uppercase() } else match(t)!!.name
                 if (s.glow >= GLOW_MIN) playable += name else notPlayable += name
             }
             when {
-                norm in BASIC -> lands.getOrPut(zone) { linkedMapOf() }.merge(t.replaceFirstChar { it.uppercase() }, 1, Int::plus)
+                norm in BASIC -> {
+                    val n = if (zone == Zone.HAND || zone == Zone.OPENING) 1
+                        else stacks.filter { (b, _) -> kotlin.math.abs(b.cx - s.cx) < 0.07f && kotlin.math.abs(b.cy - s.cy) < 0.07f }
+                            .minByOrNull { (b, _) -> kotlin.math.abs(b.cx - s.cx) + kotlin.math.abs(b.cy - s.cy) }?.second ?: 1
+                    lands.getOrPut(zone) { linkedMapOf() }.merge(t.replaceFirstChar { it.uppercase() }, n, Int::plus)
+                }
+                STACK.matches(t) -> {}
                 PT.matches(t) && s.cy < 0.8f -> creatures.getOrPut(if (s.cy < 0.44f) Zone.THEIRS else Zone.MINE) { mutableListOf() }.add(t)
                 LIFE.matches(t) && kotlin.math.abs(s.cx - 0.5f) < 0.07f && (s.cy < 0.15f || s.cy > 0.82f) ->
                     if (s.cy < 0.15f) lifeOpp = t.toInt() else lifeYou = t.toInt()
@@ -175,6 +192,25 @@ object CoachPrompt {
         }
         return Board(cards, lands, creatures, lifeYou, lifeOpp, phase, other,
             if (measured) playable else null, notPlayable - playable)
+    }
+
+    /**
+     * Rule checks on an answer, shown under it as warnings: suggesting a card that's already in play,
+     * one that Arena says can't be played now, or more than one land.
+     */
+    fun check(answer: String, b: Board): List<String> {
+        if (b.phase !in setOf(Phase.MAIN1, Phase.MAIN2, Phase.UNKNOWN)) return emptyList()
+        val play = Regex("PLAY:(.*)", RegexOption.IGNORE_CASE).find(answer)?.groupValues?.get(1)?.lowercase() ?: answer.lowercase()
+        val out = mutableListOf<String>()
+        val hand = b.cards.filter { it.second == Zone.HAND }.map { it.first.name }.toSet()
+        val mine = b.cards.filter { it.second == Zone.MINE }.map { it.first.name }.toSet()
+        val castWords = Regex("\\b(cast|play|playing|casting)\\b").containsMatchIn(play)
+        if (castWords) for (n in mine - hand) if (n.lowercase() in play && !Regex("(attack|tap|use|activate|block)[^.]*" + Regex.escape(n.lowercase())).containsMatchIn(play))
+            out += "$n is already on your battlefield."
+        if (castWords) for (n in b.notPlayable) if (n.lowercase() in play) out += "Arena says $n can't be played right now."
+        val landWords = Regex("\\b(plains|island|swamp|mountain|forest|land)s?\\b").findAll(play).count()
+        if (landWords >= 2 && Regex("\\b(and|then)\\b").containsMatchIn(play) && play.contains("play")) out += "You can only play one land per turn."
+        return out.distinct()
     }
 
     /** One-line board description, saved with a lesson so it can be shown back to the model. */
@@ -245,6 +281,14 @@ object CoachPrompt {
             for (l in lessons) sb.append("- Step ").append(l.phase).append("; board: ").append(l.board.take(220))
                 .append(" -> right play: ").append(l.correct.take(200).replace('\n', ' ')).append('\n')
             sb.append('\n')
+        }
+        // Small models follow what's closest to the question, so repeat the hard limits here.
+        if (board.phase in setOf(Phase.MAIN1, Phase.MAIN2, Phase.UNKNOWN, Phase.ATTACK)) {
+            val inPlay = unique.filter { it.second == Zone.MINE }.map { it.first.name }
+            sb.append("Summary before you answer:\n")
+            board.playable?.let { sb.append("- Cards I can play right now: ").append(if (it.isEmpty()) "none" else it.joinToString(", ")).append('\n') }
+            if (inPlay.isNotEmpty()) sb.append("- Already on my battlefield (never cast or play these again): ").append(inPlay.joinToString(", ")).append('\n')
+            sb.append("- At most one land per turn.\n\n")
         }
         sb.append(board.phase.question)
         return sb.toString()
