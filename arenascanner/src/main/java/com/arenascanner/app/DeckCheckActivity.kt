@@ -56,11 +56,11 @@ class DeckCheckActivity : Activity() {
     }
 
     private fun run() {
-        val text = input.text.toString()
-        getSharedPreferences("coach", MODE_PRIVATE).edit().putString("last_deck", text).apply()
+        val deckText = input.text.toString()
+        getSharedPreferences("coach", MODE_PRIVATE).edit().putString("last_deck", deckText).apply()
         val owned = CollectionStore.all(this).associateBy { it.name.lowercase() }
         val rarities = CardDb.load(this).associate { it.name.lowercase() to it.rarity }
-        val r = DeckCheck.check(text, { owned[it.lowercase()]?.copies ?: 0 }, { owned[it.lowercase()]?.rarity ?: rarities[it.lowercase()] ?: "?" })
+        val r = DeckCheck.check(deckText, { owned[it.lowercase()]?.copies ?: 0 }, { owned[it.lowercase()]?.rarity ?: rarities[it.lowercase()] ?: "?" })
         out.removeAllViews()
         if (r.lines.isEmpty()) { out.addView(TextView(this).apply { text = "No cards found. Paste a deck list with one card per line." }); return }
         val missing = r.total - r.owned
