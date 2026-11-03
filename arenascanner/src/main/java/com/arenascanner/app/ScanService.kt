@@ -461,6 +461,7 @@ class ScanService : Service() {
         coachExec.execute {
             try {
                 val g = Gemma(this)
+                g.detailed = Gemma.prefs(this).getString("coach_style", "quick") == "detailed"
                 g.load()
                 gemma = g
                 coachReady = true
@@ -594,7 +595,7 @@ class ScanService : Service() {
     /** Bold, coloured "PLAY:" / "WHY:" labels so the answer is quick to scan. */
     private fun styled(text: String): CharSequence {
         val sb = android.text.SpannableStringBuilder(text)
-        for ((label, color) in listOf("PLAY:" to "#FFD36B", "WHY:" to "#9EC5FF")) {
+        for ((label, color) in listOf("PLAY:" to "#FFD36B", "WHY:" to "#9EC5FF", "ALSO:" to "#B9F5C8")) {
             var i = text.indexOf(label)
             while (i >= 0) {
                 sb.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), i, i + label.length, 0)

@@ -88,6 +88,15 @@ class CoachActivity : Activity() {
                 setOnClickListener { Gemma.prefs(context).edit().putFloat("panel_text", size).apply() }
             })
         })
+        col.addView(android.widget.RadioGroup(this).apply {
+            orientation = android.widget.RadioGroup.HORIZONTAL
+            addView(TextView(context).apply { text = "Answers: " })
+            val cur = Gemma.prefs(context).getString("coach_style", "quick")
+            for ((label, key) in listOf("Quick (play + why)" to "quick", "Detailed (+ alternative)" to "detailed")) addView(android.widget.RadioButton(context).apply {
+                text = label; id = 6000 + key.length; isChecked = cur == key
+                setOnClickListener { Gemma.prefs(context).edit().putString("coach_style", key).apply() }
+            })
+        })
         col.addView(android.widget.CheckBox(this).apply {
             text = "Auto advice: ask by itself at my main phase, attacks, blocks and mulligan"
             isChecked = Gemma.prefs(context).getBoolean("auto_advice", true)

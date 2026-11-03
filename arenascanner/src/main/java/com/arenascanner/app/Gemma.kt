@@ -41,6 +41,9 @@ class Gemma(private val ctx: Context) : AutoCloseable {
     private var engine: Engine? = null
     private val closer = Executors.newSingleThreadExecutor()
 
+    /** Detailed answers add an alternative line; quick ones are just PLAY + WHY. */
+    @Volatile var detailed = false
+
     /** Which processor ended up running the model, for the status line. */
     var backendName = ""
         private set
@@ -100,11 +103,11 @@ class Gemma(private val ctx: Context) : AutoCloseable {
         val conv: Conversation = try {
             e.createConversation(
                 ConversationConfig(
-                    systemInstruction = Contents.of(listOf(Content.Text(CoachPrompt.SYSTEM))),
+                    systemInstruction = Contents.of(listOf(Content.Text(CoachPrompt.system(detailed)))),
                     // Low temperature: the same board should get the same advice.
                     samplerConfig = SamplerConfig(topK = 40, topP = 0.9, temperature = 0.3),
                     // PLAY + WHY fit easily; a cap stops a rambling answer from holding up the next one.
-                    maxOutputToken = 200,
+                    maxOutputToken = if (detailed) 360 else 200,
                 )
             )
         } catch (t: Throwable) {

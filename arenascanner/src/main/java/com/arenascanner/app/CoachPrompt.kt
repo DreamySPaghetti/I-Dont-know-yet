@@ -27,6 +27,10 @@ object CoachPrompt {
         "If the opponent is attacking, answer which blocks to make. Use the current step given in the question.\n" +
         "If the screen is unclear, say so in one line instead."
 
+    /** Detailed style adds one alternative play, so the player sees the trade-off. */
+    fun system(detailed: Boolean) = if (!detailed) SYSTEM else SYSTEM +
+        "\nDetailed mode: after WHY, add a third line:\nALSO: the second-best play and when it would be better (one sentence)."
+
     /** Short rules reminders, added only for keywords that appear on the visible cards. */
     val KEYWORDS = linkedMapOf(
         "flying" to "can only be blocked by creatures with flying or reach",
