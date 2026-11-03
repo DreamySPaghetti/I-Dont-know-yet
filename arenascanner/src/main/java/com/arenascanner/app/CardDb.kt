@@ -74,7 +74,7 @@ object CardDb {
         return Card(name, rarityCode(o.optString("rarity")), faces, rulesOf(o))
     }
 
-    /** True once the saved list includes rules text (lists saved before the coach existed don't). */
+    /** True once the saved list includes rules text. */
     fun hasRules(ctx: Context) = load(ctx).any { it.rules.isNotEmpty() }
 
     /** "{1}{W} — Creature — Cat — Lifelink — 2/2"; double-faced cards list each face, separated by " // ". */

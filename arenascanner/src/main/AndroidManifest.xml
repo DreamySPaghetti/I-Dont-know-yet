@@ -29,14 +29,6 @@
             android:name=".DeckCheckActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
-        <activity
-            android:name=".CoachActivity"
-            android:exported="false"
-            android:screenOrientation="portrait" />
-        <!-- Lets Gemma run on the GPU (LiteRT-LM); optional so phones without them still install. -->
-        <uses-native-library android:name="libvndksupport.so" android:required="false" />
-        <uses-native-library android:name="libOpenCL.so" android:required="false" />
-        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
         <service
             android:name=".AutoScroll"
             android:exported="true"

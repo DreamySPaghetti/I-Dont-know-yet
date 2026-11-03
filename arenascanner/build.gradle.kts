@@ -8,7 +8,7 @@ android {
     compileSdk = 35
     defaultConfig {
         applicationId = "com.arenascanner.app"
-        minSdk = 31 // LiteRT-LM (on-device Gemma) needs Android 12+
+        minSdk = 31
         targetSdk = 35
         val run = System.getenv("GITHUB_RUN_NUMBER")?.toInt() ?: 1
         versionCode = run
@@ -33,18 +33,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-        // LiteRT-LM may be built with a newer Kotlin than this project; its API is plain Kotlin/Java.
-        freeCompilerArgs += "-Xskip-metadata-version-check"
-    }
+    kotlinOptions { jvmTarget = "17" }
 }
 
 dependencies {
     // On-device text recognition (Latin script), bundled so it works offline.
     implementation("com.google.mlkit:text-recognition:16.0.1")
-    // On-device LLM runtime for the move coach (Gemma 4 E2B). 0.19+ is needed for the current
-    // Gemma 4 files, whose vision encoder has several signatures (older versions fail to start).
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.0")
     testImplementation("junit:junit:4.13.2")
 }

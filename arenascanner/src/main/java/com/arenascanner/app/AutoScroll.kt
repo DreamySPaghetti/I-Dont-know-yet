@@ -19,18 +19,19 @@ class AutoScroll : AccessibilityService() {
     override fun onInterrupt() {}
 
     /**
-     * Slow horizontal drag from (x1, y) to (x2, y), then a short hold before lifting so Arena
-     * doesn't fling the list further than we can read. [done] gets true if the gesture ran.
+     * Horizontal drag from (x1, y) to (x2, y), then a short hold before lifting so Arena doesn't
+     * fling the list further than we can read. [done] gets true if the gesture ran.
      */
-    fun swipe(x1: Float, y: Float, x2: Float, moveMs: Long, done: (Boolean) -> Unit) {
+    fun swipe(x1: Float, y: Float, x2: Float, moveMs: Long, holdMs: Long, done: (Boolean) -> Unit) {
         val move = GestureDescription.StrokeDescription(Path().apply { moveTo(x1, y); lineTo(x2, y) }, 0, moveMs, true)
-        val hold = move.continueStroke(Path().apply { moveTo(x2, y); lineTo(x2 + 1f, y) }, 0, 350, false)
+        val hold = move.continueStroke(Path().apply { moveTo(x2, y); lineTo(x2 + 1f, y) }, 0, holdMs, false)
         val ok = dispatchGesture(GestureDescription.Builder().addStroke(move).build(), object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) {
-                dispatchGesture(GestureDescription.Builder().addStroke(hold).build(), object : GestureResultCallback() {
+                val ok2 = dispatchGesture(GestureDescription.Builder().addStroke(hold).build(), object : GestureResultCallback() {
                     override fun onCompleted(g: GestureDescription?) = done(true)
                     override fun onCancelled(g: GestureDescription?) = done(false)
                 }, null)
+                if (!ok2) done(false)
             }
             override fun onCancelled(g: GestureDescription?) = done(false)
         }, null)

@@ -66,18 +66,10 @@ class MainActivity : Activity() {
             .apply { visibility = View.GONE; layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) } }
         col.addView(updateButton)
 
-        // Play
-        col.addView(card(
-            titleText("Play"),
-            mutedText("Get move suggestions during a game, or check what a deck is missing."),
-            primaryButton("Move coach", COACH) { startActivity(Intent(this, CoachActivity::class.java)) },
-            tonalButton("Deck check: what am I missing?") { startActivity(Intent(this, DeckCheckActivity::class.java)) },
-        ))
-
         // Collection
         scanButton = primaryButton("Start scanning") { toggleScan() }
-        autoScrollBox = switchRow("Auto-scroll while scanning", Gemma.prefs(this).getBoolean("auto_scroll", false)) { on ->
-            Gemma.prefs(this).edit().putBoolean("auto_scroll", on).apply()
+        autoScrollBox = switchRow("Auto-scroll while scanning", Prefs.get(this).getBoolean("auto_scroll", false)) { on ->
+            Prefs.get(this).edit().putBoolean("auto_scroll", on).apply()
             if (on && AutoScroll.instance == null) explainAccessibility()
         }
         val help = mutedText(
@@ -97,11 +89,20 @@ class MainActivity : Activity() {
             titleText("Collection"),
             scanButton,
             autoScrollBox,
+            mutedText("Scroll speed"),
+            chips(Prefs.SPEEDS.map { it.label }, Prefs.get(this).getInt("scroll_speed", 1)) { i -> Prefs.get(this).edit().putInt("scroll_speed", i).apply() },
             rowOf(tonalButton("Save CSV") { saveCsv() }, tonalButton("Import CSV") {
                 @Suppress("DEPRECATION") startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_IMPORT)
             }),
             rowOf(tonalButton("Copy for web page") { export() }, tonalButton("Save scan image") { saveDebugImage() }),
             helpLink, help,
+        ))
+
+        // Decks
+        col.addView(card(
+            titleText("Decks"),
+            mutedText("Paste a deck from Arena to see what you're missing and the wildcards it costs."),
+            tonalButton("Deck check") { startActivity(Intent(this, DeckCheckActivity::class.java)) },
         ))
 
         // Settings
@@ -110,7 +111,7 @@ class MainActivity : Activity() {
             titleText("Settings"),
             dbButton,
             switchRow("Track all Arena cards (Historic, Alchemy, Brawl)", CardDb.pool(this) == "all") { on ->
-                Gemma.prefs(this).edit().putString("card_pool", if (on) "all" else "standard").apply()
+                Prefs.get(this).edit().putString("card_pool", if (on) "all" else "standard").apply()
                 toast(if (on) "Downloading every Arena card (about a minute)…" else "Switching back to Standard cards…")
                 downloadCards()
             },
@@ -183,7 +184,7 @@ class MainActivity : Activity() {
             status.text = if (days >= 30) "Card list is $days days old. If a new set is out, tap Update card list." else "Card list ready."
         }
         dbButton.text = if (ready) "Update card list" else "Download card list"
-        scanButton.text = if (ScanService.running && !ScanService.coaching) "Stop scanning" else "Start scanning"
+        scanButton.text = if (ScanService.running) "Stop scanning" else "Start scanning"
         autoScrollBox.text = if (autoScrollBox.isChecked && AutoScroll.instance == null) "Auto-scroll (needs Accessibility setup)" else "Auto-scroll while scanning"
         val all = CollectionStore.all(this)
         val shown = all.filter { (query.isEmpty() || query in it.name.lowercase()) && (rarityFilter == null || it.rarity == rarityFilter) }
@@ -220,7 +221,6 @@ class MainActivity : Activity() {
     }
 
     private fun toggleScan() {
-        if (ScanService.running && ScanService.coaching) { toast("The move coach is on. Turn it off first (long-press the Coach button)."); return }
         if (ScanService.running) {
             startService(Intent(this, ScanService::class.java).setAction(ScanService.ACTION_STOP))
             scanButton.postDelayed({ refresh() }, 300)
@@ -333,14 +333,13 @@ class MainActivity : Activity() {
 
     /** One-time intro to the three things the app does. */
     private fun firstRunIntro() {
-        val prefs = Gemma.prefs(this)
+        val prefs = Prefs.get(this)
         if (prefs.getBoolean("intro_seen", false)) return
         prefs.edit().putBoolean("intro_seen", true).apply()
         AlertDialog.Builder(this)
             .setTitle("Welcome to Arena Scanner")
             .setMessage("1. Scan: open your Arena collection and let it read every card and how many copies you own.\n\n" +
                 "2. Deck check: paste a deck from Arena to see what's missing and the wildcards it costs.\n\n" +
-                "3. Move coach: an AI on your phone suggests plays during a game.\n\n" +
                 "Everything stays on your phone. Start by tapping Start scanning.")
             .setPositiveButton("Got it", null)
             .show()

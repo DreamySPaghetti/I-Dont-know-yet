@@ -15,7 +15,7 @@ object Updates {
 
     /** Newer build number if one exists, else null. Blocking; call off the main thread. */
     fun check(ctx: Context, force: Boolean = false): Int? {
-        val p = Gemma.prefs(ctx)
+        val p = Prefs.get(ctx)
         val now = System.currentTimeMillis()
         if (!force && now - p.getLong("update_checked", 0) < 86_400_000L) return p.getInt("update_build", 0).takeIf { it > current(ctx) }
         val c = URL("https://api.github.com/repos/$REPO/releases/latest").openConnection() as HttpURLConnection

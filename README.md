@@ -31,10 +31,3 @@ Android app (Kotlin, in `arenascanner/`) that reads your MTG Arena collection of
 - **Export**: copies the list as `4 Card Name [R]` lines to paste into the Arena Collection page's "Paste a list of cards".
 
 Every push to `main` builds `ArenaScanner.apk` next to `SmartCam.apk` and publishes both under Releases.
-
-## Move coach (Arena Scanner)
-
-"Move coach" in Arena Scanner runs **Gemma 4 E2B on the phone** (Google LiteRT-LM, no internet needed once set up).
-On your turn, tap the floating **Coach** button: it screenshots Arena, reads visible card names, adds each card's
-rules text from the card list, and shows Gemma's suggestion as `PLAY:` / `WHY:` in a small panel.
-The model (≈2.6 GB) is downloaded in-app from Hugging Face or picked from a `.litertlm` file you already have.

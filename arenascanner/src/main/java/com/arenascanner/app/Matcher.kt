@@ -96,6 +96,6 @@ class Matcher(cards: Collection<Card>) {
 
 /**
  * One Standard card. [rarity] is C, U, R, M or ? (Arena wildcard tiers).
- * [rules] is "{cost} — type — rules text — P/T", used by the move coach.
+ * [rules] is "{cost} — type — rules text — P/T", shown in card details.
  */
 data class Card(val name: String, val rarity: String, val faces: List<String> = emptyList(), val rules: String = "")
