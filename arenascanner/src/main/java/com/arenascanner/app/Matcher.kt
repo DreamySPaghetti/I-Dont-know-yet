@@ -7,7 +7,10 @@ package com.arenascanner.app
  */
 class Matcher(cards: Collection<Card>) {
     private val byKey = HashMap<String, Card>()
-    private val byLength = HashMap<Int, MutableList<Pair<String, Card>>>()
+    // Fuzzy candidates are looked up by a name's first two and last three letters, so a misread line
+    // is only compared with a few dozen names instead of every card (needed for the all-cards pool).
+    private val byHead = HashMap<String, MutableList<Pair<String, Card>>>()
+    private val byTail = HashMap<String, MutableList<Pair<String, Card>>>()
 
     init {
         for (c in cards) {
@@ -22,7 +25,8 @@ class Matcher(cards: Collection<Card>) {
     private fun add(key: String, c: Card) {
         if (key.length < 3 || byKey.containsKey(key)) return
         byKey[key] = c
-        byLength.getOrPut(key.length) { mutableListOf() }.add(key to c)
+        byHead.getOrPut(key.take(2)) { mutableListOf() }.add(key to c)
+        byTail.getOrPut(key.takeLast(3)) { mutableListOf() }.add(key to c)
     }
 
     /** Best card for one OCR line, or null if the line isn't a card name. */
@@ -41,8 +45,9 @@ class Matcher(cards: Collection<Card>) {
         val maxDist = if (key.length >= 14) 2 else 1
         var best: Card? = null
         var bestDist = maxDist + 1
-        for (len in key.length - maxDist..key.length + maxDist) {
-            for ((k, c) in byLength[len] ?: continue) {
+        for (bucket in listOf(byHead[key.take(2)], byTail[key.takeLast(3)])) {
+            for ((k, c) in bucket ?: continue) {
+                if (kotlin.math.abs(k.length - key.length) > maxDist) continue
                 val d = distance(key, k, bestDist)
                 if (d < bestDist) { bestDist = d; best = c }
             }

@@ -36,6 +36,11 @@ class MatcherTest {
         assertNull(m.match("Oft"))
     }
 
+    @Test fun fuzzyMatchStillFindsMisreadNamesViaHeadOrTail() {
+        assertEquals("Sheoldred, the Apocalypse", m.match("Sheoldred the Apocalypsc")?.name) // last letter misread
+        assertEquals("Sheoldred, the Apocalypse", m.match("Shcoldred the Apocalypse")?.name) // early letter misread
+    }
+
     @Test fun basicLandsIgnored() {
         assertNull(m.match("Forest"))
         assertNull(m.match("Wastes"))

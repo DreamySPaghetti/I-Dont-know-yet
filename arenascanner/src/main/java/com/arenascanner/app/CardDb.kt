@@ -13,7 +13,9 @@ import java.net.URLEncoder
  * Downloaded once and kept on the phone; "Update card list" fetches it again after a new set.
  */
 object CardDb {
-    private const val QUERY = "game:arena legal:standard"
+    /** "standard" (default) or "all": every card on Arena (Historic, Alchemy, Brawl...). */
+    fun pool(ctx: Context) = ctx.getSharedPreferences("coach", Context.MODE_PRIVATE).getString("card_pool", "standard")!!
+    private fun query(ctx: Context) = if (pool(ctx) == "all") "game:arena" else "game:arena legal:standard"
     @Volatile private var cached: List<Card>? = null
 
     private fun file(ctx: Context) = File(ctx.filesDir, "standard_cards.json")
@@ -43,12 +45,13 @@ object CardDb {
     /** Blocking download; call off the main thread. [progress] gets the running card count. */
     fun download(ctx: Context, progress: (Int) -> Unit): List<Card> {
         val out = ArrayList<Card>()
+        val seenNames = HashSet<String>()
         var url: String? = "https://api.scryfall.com/cards/search?unique=cards&q=" +
-            URLEncoder.encode(QUERY, "UTF-8")
+            URLEncoder.encode(query(ctx), "UTF-8")
         while (url != null) {
             val page = getJson(url)
             val data = page.getJSONArray("data")
-            for (i in 0 until data.length()) out.add(parse(data.getJSONObject(i)))
+            for (i in 0 until data.length()) parse(data.getJSONObject(i)).let { if (seenNames.add(it.name)) out.add(it) }
             progress(out.size)
             url = if (page.optBoolean("has_more")) page.getString("next_page") else null
             // Scryfall limits search requests to about 2 per second.
@@ -66,7 +69,8 @@ object CardDb {
         val faces = o.optJSONArray("card_faces")?.let { f -> (0 until f.length()).map { f.getJSONObject(it).getString("name") } }
             ?: emptyList()
         // Arena lists double-faced cards by their front face.
-        val name = if (faces.isNotEmpty()) faces[0] else full
+        // Alchemy rebalanced cards are "A-Name" on Scryfall but show as "Name" in Arena.
+        val name = (if (faces.isNotEmpty()) faces[0] else full).removePrefix("A-")
         return Card(name, rarityCode(o.optString("rarity")), faces, rulesOf(o))
     }
 

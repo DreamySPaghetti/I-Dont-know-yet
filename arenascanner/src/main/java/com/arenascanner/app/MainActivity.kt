@@ -138,13 +138,22 @@ class MainActivity : Activity() {
             @Suppress("DEPRECATION") startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_IMPORT)
         } }
         val aboutButton = Button(this).apply { text = "About & privacy"; setOnClickListener { startActivity(Intent(this@MainActivity, AboutActivity::class.java)) } }
+        val poolBox = android.widget.CheckBox(this).apply {
+            text = "Track all Arena cards (Historic, Alchemy, Brawl), not just Standard"
+            isChecked = CardDb.pool(context) == "all"
+            setOnCheckedChangeListener { _, on ->
+                Gemma.prefs(context).edit().putString("card_pool", if (on) "all" else "standard").apply()
+                toast(if (on) "Downloading every Arena card (about a minute)…" else "Switching back to Standard cards…")
+                downloadCards()
+            }
+        }
         val helpToggle = Button(this).apply {
             text = "How to scan ▸"
             setOnClickListener { help.visibility = if (help.visibility == View.GONE) View.VISIBLE else View.GONE
                 text = if (help.visibility == View.GONE) "How to scan ▸" else "How to scan ▾" }
         }
         for (v in listOf(heading, status, updateButton, section("Play"), coachButton, deckButton, section("Collection"), scanButton, autoScrollBox,
-            row(exportButton, csvButton), section("More"), row(dbButton, helpToggle), row(clearButton, debugButton), row(importButton, aboutButton), help, summary, row(search, rarity))) root.addView(v)
+            row(exportButton, csvButton), section("More"), row(dbButton, helpToggle), poolBox, row(clearButton, debugButton), row(importButton, aboutButton), help, summary, row(search, rarity))) root.addView(v)
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         title = "Arena Scanner"
@@ -195,8 +204,9 @@ class MainActivity : Activity() {
         status.text = "Downloading Standard card list…"
         io.execute {
             try {
-                val cards = CardDb.download(this) { n -> runOnUiThread { status.text = "Downloading Standard card list… $n cards (takes about 30 seconds)" } }
-                runOnUiThread { downloading = false; status.text = "Card list ready: ${cards.size} Standard cards."; dbButton.isEnabled = true; refresh() }
+                val what = if (CardDb.pool(this) == "all") "Arena" else "Standard"
+                val cards = CardDb.download(this) { n -> runOnUiThread { status.text = "Downloading $what card list… $n cards" } }
+                runOnUiThread { downloading = false; status.text = "Card list ready: ${cards.size} $what cards."; dbButton.isEnabled = true; refresh() }
             } catch (e: Exception) {
                 runOnUiThread {
                     downloading = false
