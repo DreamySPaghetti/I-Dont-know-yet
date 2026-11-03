@@ -35,6 +35,7 @@ class CoachActivity : Activity() {
     private lateinit var rulesBtn: Button
     private lateinit var startBtn: Button
     private lateinit var step1: TextView
+    private lateinit var lessonsStatus: TextView
     private lateinit var step2: TextView
     private lateinit var step3: TextView
     private var copying = false
@@ -82,8 +83,18 @@ class CoachActivity : Activity() {
             minHeight = (56 * dp).toInt(); setOnClickListener { toggleCoach() }
         }
         col.addView(startBtn)
+        col.addView(label("Lessons", 16f, true))
+        lessonsStatus = label("")
+        col.addView(lessonsStatus)
+        col.addView(LinearLayout(this).apply {
+            addView(Button(context).apply { text = "Export training data"; setOnClickListener { exportLessons() } },
+                LinearLayout.LayoutParams(0, -2, 1f))
+            addView(Button(context).apply { text = "Clear lessons"; setOnClickListener { confirmClearLessons() } },
+                LinearLayout.LayoutParams(0, -2, 1f))
+        })
         col.addView(label(
             "Tips:\n" +
+            "• After each answer tap 👍 Good play or ✏️ Fix it. The coach reuses your 3 most similar lessons next time.\n" +
             "• Tap Coach when it's your main phase, with your hand visible.\n" +
             "• Gemma takes a few seconds to answer; it's a small model, so treat its advice as a second opinion, " +
             "not the final word. It can misread the board.\n" +
@@ -137,6 +148,9 @@ class CoachActivity : Activity() {
         rulesBtn.text = if (hasRules) "Refresh rules text (after a new set)" else "Get card rules text"
         startBtn.isEnabled = ready && CardDb.isReady(this)
         startBtn.alpha = if (startBtn.isEnabled) 1f else 0.5f
+        val ls = Lessons.all(this)
+        lessonsStatus.text = if (ls.isEmpty()) "No lessons yet. Rate or fix the coach's answers while you play."
+            else "${ls.size} lessons saved (${ls.count { !it.good }} fixes, ${ls.count { it.good }} confirmed)."
     }
 
     // ------------------------------------------------------------ model download
@@ -297,6 +311,26 @@ class CoachActivity : Activity() {
                 if (arena != null) startActivity(arena) else toast("Coach is on. Open MTG Arena and start a game.")
             }
         }
+    }
+
+    /** Zip of lessons.jsonl + screenshots in Downloads/ArenaScanner, for fine-tuning in Colab later. */
+    private fun exportLessons() {
+        if (Lessons.all(this).isEmpty()) { toast("No lessons yet."); return }
+        val name = "coach_lessons_${System.currentTimeMillis() / 1000}.zip"
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
+            put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/zip")
+            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/ArenaScanner")
+        }
+        val uri = contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: run { toast("Couldn't create the file."); return }
+        contentResolver.openOutputStream(uri)?.use { Lessons.exportZip(this, it) }
+        toast("Saved Downloads/ArenaScanner/$name")
+    }
+
+    private fun confirmClearLessons() {
+        android.app.AlertDialog.Builder(this).setMessage("Delete all saved lessons? The coach will forget your corrections.")
+            .setPositiveButton("Delete") { _, _ -> Lessons.clear(this); refresh() }
+            .setNegativeButton("Cancel", null).show()
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()

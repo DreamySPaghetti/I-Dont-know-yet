@@ -139,7 +139,21 @@ object CoachPrompt {
         return Board(cards, lands, creatures, lifeYou, lifeOpp, phase, other)
     }
 
-    fun build(board: Board, maxCards: Int = 25): String {
+    /** One-line board description, saved with a lesson so it can be shown back to the model. */
+    fun summary(b: Board): String {
+        val parts = mutableListOf<String>()
+        for (z in Zone.values()) {
+            val names = b.cards.filter { it.second == z }.map { it.first.name }.distinct()
+            val lands = b.lands[z].orEmpty().entries.joinToString(", ") { "${it.key} x${it.value}" }
+            val pts = b.creatures[z].orEmpty().joinToString(", ")
+            val bits = listOf(names.joinToString(", "), lands, if (pts.isEmpty()) "" else "P/T $pts").filter { it.isNotEmpty() }
+            if (bits.isNotEmpty()) parts += z.label + ": " + bits.joinToString("; ")
+        }
+        if (b.lifeYou != null || b.lifeOpp != null) parts += "life me ${b.lifeYou ?: "?"} / opp ${b.lifeOpp ?: "?"}"
+        return parts.joinToString(" | ")
+    }
+
+    fun build(board: Board, maxCards: Int = 25, lessons: List<Lesson> = emptyList()): String {
         val sb = StringBuilder()
         sb.append("This is a screenshot of my MTG Arena game on my phone. My side is the bottom half of the screen ")
             .append("and my hand is along the bottom edge; my opponent is the top half.\n")
@@ -178,6 +192,12 @@ object CoachPrompt {
         }
         val other = board.other.map { it.trim() }.filter { it.length in 1..40 }.distinct().joinToString(" | ").take(400)
         if (other.isNotEmpty()) sb.append("Other text on screen (buttons, prompts): ").append(other).append("\n\n")
+        if (lessons.isNotEmpty()) {
+            sb.append("Lessons from my past games in similar spots (I confirmed these plays; follow them when they fit):\n")
+            for (l in lessons) sb.append("- Step ").append(l.phase).append("; board: ").append(l.board.take(220))
+                .append(" -> right play: ").append(l.correct.take(200).replace('\n', ' ')).append('\n')
+            sb.append('\n')
+        }
         sb.append(board.phase.question)
         return sb.toString()
     }

@@ -94,6 +94,14 @@ class ScanService : Service() {
     @Volatile private var coachReady = false
     @Volatile private var coachBusy = false
     private var panel: TextView? = null
+    private var panelBox: android.widget.LinearLayout? = null
+    private var actions: android.widget.LinearLayout? = null
+    private var fixBox: android.view.View? = null
+    // The last question and answer, so the player can rate or correct it.
+    private var lastImage: ByteArray? = null
+    private var lastPrompt = ""
+    private var lastBoard: CoachPrompt.Board? = null
+    private var lastAnswer = ""
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -377,7 +385,7 @@ class ScanService : Service() {
         if (coachBusy) return
         coachBusy = true
         overlay?.visibility = android.view.View.INVISIBLE
-        panel?.visibility = android.view.View.INVISIBLE
+        panelBox?.visibility = android.view.View.INVISIBLE
         // Wait for a frame captured after the overlay disappeared.
         bg.postDelayed({
             val img = latest
@@ -400,8 +408,11 @@ class ScanService : Service() {
                 }
                 val board = CoachPrompt.analyze(seen) { matcher.match(it) }
                 val cards = board.cards
-                val prompt = CoachPrompt.build(board)
+                val names = board.cards.map { it.first.name }.toSet()
+                val learned = LessonMatch.best(Lessons.all(this), board.phase.name, names)
+                val prompt = CoachPrompt.build(board, lessons = learned)
                 val image = jpeg(bmp, 1024)
+                lastImage = image; lastPrompt = prompt; lastBoard = board; lastAnswer = ""
                 showPanel("Thinking… (${cards.distinctBy { it.first.name }.size} cards read)")
                 coachExec.execute { askGemma(image, prompt) }
             }
@@ -412,10 +423,15 @@ class ScanService : Service() {
         val g = gemma ?: run { main.post { coachBusy = false }; return }
         val started = System.currentTimeMillis()
         g.ask(image, prompt,
-            onText = { t -> main.post { showPanel(t.trim()) } },
+            onText = { t -> lastAnswer = t.trim(); main.post { showPanel(lastAnswer) } },
             onDone = {
                 val secs = (System.currentTimeMillis() - started) / 1000
-                main.post { panel?.let { it.text = "${it.text}\n\n(${secs}s · tap to close)" }; coachBusy = false }
+                val used = Regex("Lessons from my past games").containsMatchIn(prompt)
+                main.post {
+                    panel?.let { it.text = styled("$lastAnswer\n\n(${secs}s${if (used) " · used your past lessons" else ""})") }
+                    actions?.visibility = android.view.View.VISIBLE
+                    coachBusy = false
+                }
             },
             onError = { t -> main.post { showPanel("Gemma error: ${t.message}"); coachBusy = false } })
     }
@@ -443,7 +459,58 @@ class ScanService : Service() {
         return sb
     }
 
-    /** Advice panel at the top centre of the screen; tap it to hide. */
+    /** Saves the last answer as a lesson: [correct] is the play you confirmed or typed. */
+    private fun saveLesson(correct: String, good: Boolean) {
+        val b = lastBoard ?: return
+        val l = Lesson(System.currentTimeMillis(), b.phase.name, b.cards.map { it.first.name }.distinct(),
+            CoachPrompt.summary(b), lastAnswer, correct, good)
+        Lessons.add(this, l, lastImage, lastPrompt)
+        actions?.visibility = android.view.View.GONE
+        showPanel(if (good) "Saved: the coach will repeat this in similar spots." else "Saved your play. The coach will use it in similar spots.")
+    }
+
+    /** Text box over Arena for typing the right play. This window takes focus so the keyboard opens. */
+    private fun showFix() {
+        val wm = getSystemService(WindowManager::class.java)
+        val d = resources.displayMetrics.density
+        fixBox?.let { runCatching { wm.removeView(it) } }
+        val pad = (12 * d).toInt()
+        val edit = android.widget.EditText(this).apply {
+            hint = "The right play, e.g. Block the 2/2 with Veteran Survivor"
+            setText(Regex("PLAY:\\s*(.*)").find(lastAnswer)?.groupValues?.get(1) ?: "")
+            setTextColor(Color.WHITE); setHintTextColor(Color.LTGRAY); textSize = 15f
+            minLines = 2
+        }
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(pad, pad, pad, pad)
+            background = GradientDrawable().apply { cornerRadius = 12 * d; setColor(Color.parseColor("#F21B1530")) }
+            addView(TextView(this@ScanService).apply { text = "What was the right play?"; setTextColor(Color.WHITE); textSize = 15f })
+            addView(edit)
+            addView(android.widget.LinearLayout(this@ScanService).apply {
+                gravity = Gravity.END
+                addView(android.widget.Button(this@ScanService).apply { text = "Cancel"; setOnClickListener { runCatching { wm.removeView(fixBox) }; fixBox = null } })
+                addView(android.widget.Button(this@ScanService).apply {
+                    text = "Save"
+                    setOnClickListener {
+                        val t = edit.text.toString().trim()
+                        runCatching { wm.removeView(fixBox) }; fixBox = null
+                        if (t.isNotEmpty()) saveLesson("PLAY: $t", good = false)
+                    }
+                })
+            })
+        }
+        val lp = WindowManager.LayoutParams(
+            (minOf(width, height) * 1.1).toInt().coerceAtMost((width * 0.6).toInt()),
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, 0, PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = (8 * d).toInt(); softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE }
+        wm.addView(box, lp)
+        fixBox = box
+        edit.requestFocus()
+    }
+
+    /** Advice panel at the top centre of the screen; tap the text to hide. Rate/correct buttons show after an answer. */
     private fun showPanel(text: String) {
         val wm = getSystemService(WindowManager::class.java)
         val d = resources.displayMetrics.density
@@ -458,19 +525,33 @@ class ScanService : Service() {
                 setColor(Color.parseColor("#E61B1530"))
                 setStroke((1 * d).toInt(), Color.parseColor("#806A3FB5"))
             }
-            setOnClickListener { visibility = android.view.View.GONE }
+            setOnClickListener { panelBox?.visibility = android.view.View.GONE }
         }.also { tv ->
+            fun btn(label: String, onClick: () -> Unit) = android.widget.Button(this).apply {
+                text = label; textSize = 13f; isAllCaps = false; setOnClickListener { onClick() }
+            }
+            val row = android.widget.LinearLayout(this).apply {
+                visibility = android.view.View.GONE
+                addView(btn("👍 Good play") { saveLesson(lastAnswer, good = true) })
+                addView(btn("✏️ Fix it") { showFix() })
+                addView(btn("✕") { panelBox?.visibility = android.view.View.GONE })
+            }
+            val boxView = android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                addView(tv); addView(row)
+            }
             val lp = WindowManager.LayoutParams(
                 (minOf(width, height) * 1.1).toInt().coerceAtMost((width * 0.6).toInt()),
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT
             ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = (8 * d).toInt() }
-            wm.addView(tv, lp)
-            panel = tv
+            wm.addView(boxView, lp)
+            panel = tv; actions = row; panelBox = boxView
         }
         p.text = styled(text)
-        p.visibility = android.view.View.VISIBLE
+        actions?.visibility = android.view.View.GONE
+        panelBox?.visibility = android.view.View.VISIBLE
     }
 
     private fun toBitmap(img: Image): Bitmap {
@@ -513,7 +594,8 @@ class ScanService : Service() {
         coaching = false
         overlay?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
         overlay = null
-        panel?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
+        panelBox?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
+        fixBox?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
         panel = null
         coachExec.execute { gemma?.close(); gemma = null }
         coachExec.shutdown()
