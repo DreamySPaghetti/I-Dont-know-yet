@@ -216,6 +216,61 @@ object CoachPrompt {
         return out.distinct()
     }
 
+    /** Mana value from the rules line's cost, e.g. "{2}{G}{G}" = 4; null if the card has no cost. */
+    fun manaValue(c: Card): Int? {
+        val cost = c.rules.split(" — ").firstOrNull()?.takeIf { it.startsWith("{") } ?: return null
+        return Regex("\\{([^}]+)}").findAll(cost).sumOf { m -> m.groupValues[1].toIntOrNull() ?: if (m.groupValues[1] == "X") 0 else 1 }
+    }
+
+    fun isLand(c: Card) = c.rules.split(" — ").take(2).any { Regex("\\bLand\\b").containsMatchIn(it) }
+
+    /** Counted facts about the opening hand, so the model doesn't have to count. */
+    fun openingFacts(b: Board): String? {
+        if (b.phase != Phase.MULLIGAN) return null
+        val cards = b.cards.filter { it.second == Zone.OPENING }.map { it.first }.distinctBy { it.name }
+        val basics = b.lands[Zone.OPENING].orEmpty().values.sum()
+        if (cards.isEmpty() && basics == 0) return null
+        val lands = basics + cards.count { isLand(it) }
+        val spells = cards.filterNot { isLand(it) }
+        val cheap = spells.count { (manaValue(it) ?: 9) <= 2 }
+        return "Opening hand facts: $lands lands, ${spells.size} spells, $cheap of them cost 2 or less" +
+            " (counts may miss stacked duplicates). A keepable 7 usually has 2-5 lands and early plays."
+    }
+
+    private fun pt(s: String): Pair<Int, Int>? = Regex("^(\\d+)/(\\d+)$").find(s)?.let { it.groupValues[1].toInt() to it.groupValues[2].toInt() }
+
+    /** Combat math from the power/toughness on screen (ignores abilities like deathtouch or first strike). */
+    fun combatFacts(b: Board): String? {
+        val mine = b.creatures[Zone.MINE].orEmpty().mapNotNull { s -> pt(s)?.let { s to it } }
+        val theirs = b.creatures[Zone.THEIRS].orEmpty().mapNotNull { s -> pt(s)?.let { s to it } }
+        if (mine.isEmpty() || theirs.isEmpty()) return null
+        val sb = StringBuilder("Combat math (power/toughness only, ignoring abilities):\n")
+        when (b.phase) {
+            Phase.BLOCK -> for ((tl, t) in theirs.distinctBy { it.first }) {
+                val outs = mine.distinctBy { it.first }.mapNotNull { (ml, m) ->
+                    val kills = m.first >= t.second; val dies = t.first >= m.second
+                    when {
+                        kills && !dies -> "your $ml kills it and survives"
+                        kills && dies -> "your $ml trades with it"
+                        !dies -> "your $ml blocks it safely"
+                        else -> null
+                    }
+                }
+                sb.append("- If their $tl attacks: ").append(if (outs.isEmpty()) "every block loses your creature" else outs.joinToString("; ")).append('\n')
+            }
+            Phase.ATTACK, Phase.MAIN1 -> for ((ml, m) in mine.distinctBy { it.first }) {
+                if (m.first == 0) continue
+                val killers = theirs.filter { it.second.first >= m.second }.map { it.first }.distinct()
+                val victims = theirs.filter { m.first >= it.second.second }.map { it.first }.distinct()
+                sb.append("- Your $ml attacking: ")
+                    .append(if (killers.isEmpty()) "no blocker of theirs kills it" else "dies if blocked by their ${killers.joinToString("/")}")
+                    .append(if (victims.isEmpty()) "" else "; kills a blocking ${victims.joinToString("/")}").append('\n')
+            }
+            else -> return null
+        }
+        return sb.toString()
+    }
+
     /** Second try after [check] found problems: same board, plus what was wrong with the first answer. */
     fun retry(prompt: String, answer: String, problems: List<String>): String {
         val q = prompt.lastIndexOf("Answer in exactly this format:")
@@ -296,6 +351,8 @@ object CoachPrompt {
                 .append(" -> right play: ").append(l.correct.take(200).replace('\n', ' ')).append('\n')
             sb.append('\n')
         }
+        openingFacts(board)?.let { sb.append(it).append("\n\n") }
+        combatFacts(board)?.let { sb.append(it).append('\n') }
         // Small models follow what's closest to the question, so repeat the hard limits here.
         if (board.phase in setOf(Phase.MAIN1, Phase.MAIN2, Phase.UNKNOWN, Phase.ATTACK)) {
             val inPlay = unique.filter { it.second == Zone.MINE }.map { it.first.name }

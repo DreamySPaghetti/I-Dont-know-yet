@@ -115,6 +115,36 @@ class CoachPromptTest {
         assertTrue(r.endsWith("PLAY: ...\nWHY: ..."))
     }
 
+    @Test fun manaValueAndLands() {
+        assertEquals(3, CoachPrompt.manaValue(Card("Murder", "C", rules = "{1}{B}{B} — Instant — Destroy target creature.")))
+        assertEquals(null, CoachPrompt.manaValue(Card("Thornwood Falls", "C", rules = "Land — This land enters tapped.")))
+        assertTrue(CoachPrompt.isLand(Card("Thornwood Falls", "C", rules = "Land — This land enters tapped.")))
+    }
+
+    @Test fun openingHandFacts() {
+        val falls = Card("Thornwood Falls", "C", rules = "Land — This land enters tapped.")
+        val elves = Card("Llanowar Elves", "C", rules = "{G} — Creature — Elf Druid — 1/1")
+        val wurm = Card("Wurm", "C", rules = "{4}{G}{G} — Creature — Wurm — 6/6")
+        val b = CoachPrompt.Board(listOf(falls to Zone.OPENING, elves to Zone.OPENING, wurm to Zone.OPENING),
+            mapOf(Zone.OPENING to mapOf("Forest" to 2)), emptyMap(), null, null, CoachPrompt.Phase.MULLIGAN, emptyList())
+        assertTrue(CoachPrompt.openingFacts(b)!!.startsWith("Opening hand facts: 3 lands, 2 spells, 1 of them cost 2 or less"))
+    }
+
+    @Test fun blockMathFromTheBlockingScreenshot() {
+        val b = CoachPrompt.analyze(blockScreen, match)
+        val f = CoachPrompt.combatFacts(b)!!
+        assertTrue(f, f.contains("If their 2/2 attacks: your 5/3 kills it and survives; your 2/1 trades with it"))
+        assertTrue(f, f.contains("If their 1/1 attacks: your 5/3 kills it and survives; your 2/1 kills it and survives"))
+    }
+
+    @Test fun attackMath() {
+        val b = CoachPrompt.Board(emptyList(), emptyMap(), mapOf(Zone.MINE to listOf("5/3", "1/1"), Zone.THEIRS to listOf("2/2", "0/5")),
+            null, null, CoachPrompt.Phase.ATTACK, emptyList())
+        val f = CoachPrompt.combatFacts(b)!!
+        assertTrue(f, f.contains("Your 5/3 attacking: no blocker of theirs kills it; kills a blocking 2/2"))
+        assertTrue(f, f.contains("Your 1/1 attacking: dies if blocked by their 2/2"))
+    }
+
     @Test fun typeLineIsNotACard() {
         val b = CoachPrompt.analyze(listOf(Seen("Basic Land - Plains", 0.3f, 0.8f, 0.012f)), match)
         assertTrue(b.cards.isEmpty())
