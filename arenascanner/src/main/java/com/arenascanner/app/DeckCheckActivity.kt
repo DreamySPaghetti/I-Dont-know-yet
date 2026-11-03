@@ -18,7 +18,6 @@ class DeckCheckActivity : Activity() {
     private lateinit var out: LinearLayout
     private val dp get() = resources.displayMetrics.density
     private val rarityName = mapOf("M" to "Mythic", "R" to "Rare", "U" to "Uncommon", "C" to "Common", "?" to "Unknown")
-    private val rarityColor = mapOf("M" to "#C4471D", "R" to "#A8811C", "U" to "#6F8296", "C" to "#3B3F46", "?" to "#8A93A3")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,7 +83,7 @@ class DeckCheckActivity : Activity() {
         })
         for (l in r.lines) out.addView(LinearLayout(this).apply {
             setPadding(0, (3 * dp).toInt(), 0, (3 * dp).toInt())
-            addView(TextView(context).apply { text = l.rarity; setTextColor(Color.parseColor(rarityColor[l.rarity] ?: "#8A93A3")); typeface = Typeface.MONOSPACE; minWidth = (24 * dp).toInt() })
+            addView(TextView(context).apply { text = l.rarity; setTextColor(this@DeckCheckActivity.rarityColor(l.rarity)); typeface = Typeface.MONOSPACE; minWidth = (24 * dp).toInt() })
             addView(TextView(context).apply { text = "${l.need} ${l.name}" + if (l.sideboard) "  (side)" else "" }, LinearLayout.LayoutParams(0, -2, 1f))
             addView(TextView(context).apply {
                 text = if (l.missing == 0) "owned" else "need ${l.missing}"
