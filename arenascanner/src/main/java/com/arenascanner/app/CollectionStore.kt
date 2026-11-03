@@ -8,7 +8,16 @@ import java.io.File
  * One owned card: [copies] is 1–4 (Arena never needs more than 4 of a card).
  * [manual] is true once you set the count yourself; scans then leave it alone.
  */
-data class Owned(val name: String, val rarity: String, var copies: Int, var manual: Boolean = false)
+data class Owned(
+    val name: String, val rarity: String, var copies: Int, var manual: Boolean = false,
+    /** When the card first appeared in the collection (ms). */
+    var added: Long = 0,
+    /** How many times its diamonds were read in the scan that last set its count. */
+    var reads: Int = 0,
+) {
+    /** Count came from a single read and wasn't set by hand: worth a quick check. */
+    val uncertain get() = !manual && reads == 1
+}
 
 /** The scanned collection, saved as a small JSON file. Shared by the screen and the scan service. */
 object CollectionStore {
@@ -30,26 +39,35 @@ object CollectionStore {
     /** Counts of the last [recordScan]: new cards and changed counts. */
     @Volatile var lastUpdated = 0
         private set
+    /** Names of the cards the last [recordScan] added. */
+    @Volatile var lastAdded: List<String> = emptyList()
+        private set
 
-    @Synchronized fun recordScan(ctx: Context, seen: List<Pair<Card, Int?>>): Int {
+    /** [seen]: card, count read (null = couldn't tell), and how many reads that count is based on. */
+    @Synchronized fun recordScan(ctx: Context, seen: List<Triple<Card, Int?, Int>>): Int {
         load(ctx)
         var added = 0
         var updated = 0
         var changed = false
-        for ((c, n) in seen) {
+        val addedNames = mutableListOf<String>()
+        val now = System.currentTimeMillis()
+        for ((c, n, reads) in seen) {
             if (n == 0) continue // every diamond empty: not owned
             val ex = cards[c.name]
             if (ex == null) {
                 // Only add a card once its diamonds have been read. A name with no readable diamonds
                 // above it is usually a word in some card's rules text (e.g. "Flashback"), not a card.
                 if (n == null) continue
-                cards[c.name] = Owned(c.name, c.rarity, n.coerceIn(1, 4)); added++; changed = true
-            } else if (n != null && !ex.manual && ex.copies != n) {
-                ex.copies = n.coerceIn(1, 4); changed = true; updated++
+                cards[c.name] = Owned(c.name, c.rarity, n.coerceIn(1, 4), added = now, reads = reads); added++; changed = true
+                addedNames += c.name
+            } else if (n != null && !ex.manual) {
+                if (ex.copies != n) { ex.copies = n.coerceIn(1, 4); updated++; changed = true }
+                if (ex.reads != reads) { ex.reads = reads; changed = true }
             }
         }
         if (changed) save(ctx)
         lastUpdated = updated
+        lastAdded = addedNames
         return added
     }
 
@@ -63,7 +81,8 @@ object CollectionStore {
     /** Adds or replaces cards from an import; imported counts count as set by hand. Returns how many. */
     @Synchronized fun importRows(ctx: Context, rows: List<Triple<String, Int, String>>): Int {
         load(ctx)
-        for ((name, n, r) in rows) cards[name] = Owned(name, r, n.coerceIn(1, 4), manual = true)
+        val now = System.currentTimeMillis()
+        for ((name, n, r) in rows) cards[name] = Owned(name, r, n.coerceIn(1, 4), manual = true, added = cards[name]?.added ?: now)
         save(ctx)
         return rows.size
     }
@@ -138,13 +157,13 @@ object CollectionStore {
         val o = JSONObject(f.readText())
         for (k in o.keys()) {
             val c = o.getJSONObject(k)
-            cards[k] = Owned(k, c.optString("r", "?"), c.optInt("q", 1), c.optBoolean("m", false))
+            cards[k] = Owned(k, c.optString("r", "?"), c.optInt("q", 1), c.optBoolean("m", false), c.optLong("t", 0), c.optInt("n", 0))
         }
     }
 
     private fun save(ctx: Context) {
         val o = JSONObject()
-        for ((k, v) in cards) o.put(k, JSONObject().put("r", v.rarity).put("q", v.copies).put("m", v.manual))
+        for ((k, v) in cards) o.put(k, JSONObject().put("r", v.rarity).put("q", v.copies).put("m", v.manual).put("t", v.added).put("n", v.reads))
         file(ctx).writeText(o.toString())
     }
 }

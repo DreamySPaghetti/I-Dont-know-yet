@@ -50,6 +50,7 @@ class ScanService : Service() {
         const val EXTRA_CODE = "code"
         const val EXTRA_DATA = "data"
         const val ACTION_STOP = "stop"
+        const val ACTION_TOGGLE = "toggle"
         private const val CHANNEL = "scan"
         private const val TICK_MS = 100L
         private const val DEBUG_EVERY_MS = 5000L
@@ -105,11 +106,15 @@ class ScanService : Service() {
     private var beforeSwipe: IntArray? = null
     private var stuck = 0
     private var speed = Prefs.SPEEDS[1]
+    private var scrollStartAt = 0L          // first swipe waits a moment so you can open Collection
+    @Volatile private var emptyScans = 0    // scans in a row that found no cards
+    private val sessionNew = LinkedHashSet<String>()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) { stopSelf(); return START_NOT_STICKY }
+        if (intent?.action == ACTION_TOGGLE) { main.post { togglePause() }; return START_NOT_STICKY }
         if (projection != null) return START_NOT_STICKY
         startForeground(1, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         val code = intent?.getIntExtra(EXTRA_CODE, 0) ?: 0
@@ -124,6 +129,7 @@ class ScanService : Service() {
         running = true
         speed = Prefs.speed(this)
         scrollOn = Prefs.get(this).getBoolean("auto_scroll", false) && AutoScroll.instance != null
+        scrollStartAt = System.currentTimeMillis() + 4500
         bg.postDelayed(::tick, 1500)
         return START_NOT_STICKY
     }
@@ -210,6 +216,16 @@ class ScanService : Service() {
     private fun autoScroll(img: Image) {
         if (!scrollOn || paused) return
         val now = System.currentTimeMillis()
+        if (now < scrollStartAt) return
+        // Safety: don't swipe around a screen that isn't the collection.
+        if (emptyScans >= 4) {
+            scrollOn = false
+            main.post {
+                paused = true; overlay?.let { style(it) }; flash("Paused", 1)
+                showPanel("No cards on screen, so auto-scroll paused.\nOpen Collection in Arena, then tap the button to carry on.")
+            }
+            return
+        }
         if (swiping) {
             // Watchdog: a gesture whose callback never came back mustn't stop scrolling for good.
             if (now - swipeStartedAt > speed.moveMs + speed.holdMs + 2500) { swiping = false; swipeEndedAt = now }
@@ -225,6 +241,7 @@ class ScanService : Service() {
             scrollOn = false
             main.post {
                 paused = true; overlay?.let { style(it); it.text = "Done" }
+                buzz()
                 showPanel("Finished: $found new cards, $updatedTotal counts updated.\n" +
                     "Change Arena's filter and tap the button to scan more, or long-press it to stop.")
             }
@@ -298,14 +315,17 @@ class ScanService : Service() {
                             val v = votes.getOrPut(card.name) { IntArray(5) }
                             read.count?.let { v[it]++ }
                             // Most-read count; ties go to the higher one. null until read once.
-                            card to (1..4).filter { v[it] > 0 }.maxWithOrNull(compareBy<Int>({ v[it] }, { it }))
+                            val best = (1..4).filter { v[it] > 0 }.maxWithOrNull(compareBy<Int>({ v[it] }, { it }))
+                            Triple(card, best, best?.let { v[it] } ?: 0)
                         }
+                        emptyScans = if (hits.isEmpty()) emptyScans + 1 else 0
                         val added = CollectionStore.recordScan(this, counts)
+                        sessionNew += CollectionStore.lastAdded
                         found += added
                         updatedTotal += CollectionStore.lastUpdated
                         if (added > 0 || CollectionStore.lastUpdated > 0) updateNotification()
                         saveDebug(bmp, result)
-                        main.post { if (added > 0) flash("+$added") }
+                        main.post { if (added > 0) flash("+$added") else overlay?.text = idleLabel() }
                     } finally {
                         finished()
                     }
@@ -374,7 +394,8 @@ class ScanService : Service() {
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT
+            // Keep the screen on while scanning: auto-scroll gestures don't count as touches, so it would time out.
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON, PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = Prefs.get(this@ScanService).getInt("btn_x", (8 * d).toInt())
@@ -394,20 +415,37 @@ class ScanService : Service() {
                 MotionEvent.ACTION_UP -> if (moved) {
                     Prefs.get(this).edit().putInt("btn_x", lp.x).putInt("btn_y", lp.y).apply()
                 } else if (e.eventTime - downAt > 600) stopSelf()
-                else {
-                    paused = !paused; style(btn); btn.text = if (paused) "Paused" else "Auto"
-                    panel?.visibility = View.GONE
-                    // Resuming (e.g. after "Done" and a new filter) restarts auto-scroll.
-                    if (!paused && Prefs.get(this).getBoolean("auto_scroll", false) && AutoScroll.instance != null) {
-                        speed = Prefs.speed(this); scrollOn = true; stuck = 0; beforeSwipe = null; scansAfterSwipe = 1
-                    }
-                }
+                else togglePause()
             }
             true
         }
         wm.addView(btn, lp)
         overlay = btn
         overlayLp = lp
+    }
+
+    private fun togglePause() {
+        val btn = overlay ?: return
+        paused = !paused; style(btn); btn.text = idleLabel()
+        panel?.visibility = View.GONE
+        // Resuming (e.g. after "Done" and a new filter) restarts auto-scroll.
+        if (!paused && Prefs.get(this).getBoolean("auto_scroll", false) && AutoScroll.instance != null) {
+            speed = Prefs.speed(this); scrollOn = true; stuck = 0; beforeSwipe = null; scansAfterSwipe = 1; emptyScans = 0
+            scrollStartAt = System.currentTimeMillis() + 800
+        }
+        getSystemService(NotificationManager::class.java).notify(1, notification())
+    }
+
+    /** "Paused", or how many different cards this session has read so far. */
+    private fun idleLabel() = when {
+        paused -> "Paused"
+        votes.isEmpty() -> "Auto"
+        else -> "${votes.size}"
+    }
+
+    private fun buzz() = runCatching {
+        val v = getSystemService(android.os.VibratorManager::class.java).defaultVibrator
+        v.vibrate(android.os.VibrationEffect.createOneShot(120, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
     }
 
     private fun style(btn: TextView) {
@@ -424,7 +462,7 @@ class ScanService : Service() {
         val btn = overlay ?: return
         btn.text = label
         main.removeCallbacksAndMessages("flash")
-        main.postAtTime({ btn.text = if (paused) "Paused" else "Auto" }, "flash", android.os.SystemClock.uptimeMillis() + hold)
+        main.postAtTime({ btn.text = idleLabel() }, "flash", android.os.SystemClock.uptimeMillis() + hold)
     }
 
     /** Message panel at the top of the screen; tap to hide. */
@@ -496,13 +534,22 @@ class ScanService : Service() {
             .setContentText(if (found + updatedTotal > 0) "$found new cards, $updatedTotal counts updated so far. Tap the button to pause."
                 else "Open Collection in Arena; it scans as the cards go by. Tap the button to pause.")
             .setContentIntent(open)
+            .addAction(Notification.Action.Builder(null, if (paused) "Resume" else "Pause",
+                PendingIntent.getService(this, 1, Intent(this, ScanService::class.java).setAction(ACTION_TOGGLE), PendingIntent.FLAG_IMMUTABLE)).build())
             .addAction(Notification.Action.Builder(null, "Stop", stop).build())
             .setOngoing(true)
             .build()
     }
 
     override fun onDestroy() {
-        if (running) android.widget.Toast.makeText(this, "Scan finished: $found new cards, $updatedTotal counts updated.", android.widget.Toast.LENGTH_LONG).show()
+        if (running) {
+            android.widget.Toast.makeText(this, "Scan finished: $found new cards, $updatedTotal counts updated.", android.widget.Toast.LENGTH_LONG).show()
+            // Remember what this session added (main screen can show it) and back the collection up.
+            if (sessionNew.isNotEmpty()) Prefs.get(this).edit()
+                .putString("last_scan_new", org.json.JSONArray(sessionNew.toList()).toString())
+                .putLong("last_scan_time", System.currentTimeMillis()).apply()
+            if (found + updatedTotal > 0) Thread { Backup.save(applicationContext) }.start()
+        }
         running = false
         runCatching { unregisterReceiver(screenReceiver) }
         val wm = getSystemService(WindowManager::class.java)
