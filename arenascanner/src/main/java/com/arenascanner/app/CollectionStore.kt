@@ -52,6 +52,14 @@ object CollectionStore {
 
     @Synchronized fun clear(ctx: Context) { cards.clear(); loaded = true; save(ctx) }
 
+    /** Spreadsheet-ready CSV: Count, Name, Rarity, Set by hand. Names with commas are quoted. */
+    @Synchronized fun exportCsv(ctx: Context): String {
+        val rarity = mapOf("C" to "Common", "U" to "Uncommon", "R" to "Rare", "M" to "Mythic")
+        fun q(s: String) = if (s.any { it == ',' || it == '"' }) "\"" + s.replace("\"", "\"\"") + "\"" else s
+        val rows = all(ctx).map { "${it.copies},${q(it.name)},${rarity[it.rarity] ?: "Unknown"},${if (it.manual) "yes" else "no"}" }
+        return (listOf("Count,Name,Rarity,Set by hand") + rows).joinToString("\r\n") + "\r\n"
+    }
+
     /** "4 Card Name [R]" per line: pastes into the Arena Collection page's "Paste a list" box. */
     @Synchronized fun exportText(ctx: Context): String =
         all(ctx).joinToString("\n") { "${it.copies} ${it.name} [${it.rarity}]" }

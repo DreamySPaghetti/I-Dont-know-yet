@@ -72,8 +72,11 @@ class ScanService : Service() {
     // stableTicks = 0: don't wait for scrolling to stop, just skip frames that look like the last scan.
     private var ticks = 0
     private val settle = Settle(stableTicks = 0, newDiff = 4.0)
-    /** Highest count read for each card during this session; a pip hidden for a frame won't lower it. */
-    private val sessionMax = HashMap<String, Int>()
+    /**
+     * Every count read for each card this session (index = copies). The card's count is the one read
+     * most often, so a single misread frame can't change it.
+     */
+    private val votes = HashMap<String, IntArray>()
     private var found = 0
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
     private val matcher by lazy { Matcher(CardDb.load(this)) }
@@ -207,11 +210,11 @@ class ScanService : Service() {
                     }
                     val result = countPips(bmp, hits)
                     val counts = result.map { (card, _, read) ->
-                        val n = read.count
-                        val best = maxOf(n ?: 0, sessionMax[card.name] ?: 0)
-                        if (best > 0) sessionMax[card.name] = best
-                        // 0 = all four diamonds empty: you don't own it, so it isn't added.
-                        card to (if (best > 0) best else n)
+                        val v = votes.getOrPut(card.name) { IntArray(5) }
+                        read.count?.let { v[it]++ }
+                        // Most-read count; ties go to the higher one. null until it has been read once.
+                        val best = (1..4).filter { v[it] > 0 }.maxWithOrNull(compareBy<Int>({ v[it] }, { it }))
+                        card to best
                     }
                     val added = CollectionStore.recordScan(this, counts)
                     found += added

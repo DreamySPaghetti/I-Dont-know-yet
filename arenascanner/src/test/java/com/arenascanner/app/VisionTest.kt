@@ -11,7 +11,7 @@ class VisionTest {
      * arena_row.luma: a strip from a real Arena collection recording (2340×1080 phone, landscape),
      * showing the diamonds and name bars of the first 4 cards in the top row. Stored as brightness
      * bytes (after an 8-byte width/height header) because Android unit tests have no image decoder.
-     * arena_row.png is the same strip as a picture, for people.
+     * arena_row.png / dark_row.png are the same strips as pictures, for people.
      * Names start at x = 71, 370, 669, 967 with their text top at y ≈ 80.
      */
     private val bytes = javaClass.getResourceAsStream("/arena_row.luma")!!.readBytes()
@@ -55,6 +55,27 @@ class VisionTest {
     @Test fun nothingAboveAName_givesNull() {
         // A "name" in the middle of the dark background has no diamonds above it.
         assertNull(read(Box(560, 60, 700, 76), 254))
+    }
+
+    /** Second real strip: bottom row on a near-black background, where empty diamonds look darkest. */
+    private val dark = javaClass.getResourceAsStream("/dark_row.luma")!!.readBytes()
+    private val darkW = java.nio.ByteBuffer.wrap(dark, 0, 8).int
+    private val darkH = java.nio.ByteBuffer.wrap(dark, 4, 4).int
+    private val darkLuma = { x: Int, y: Int -> dark[8 + y * darkW + x].toInt() and 0xFF }
+    private val darkNames = listOf(
+        Box(17, 96, 160, 112),  // City Pigeon: 1
+        Box(316, 96, 500, 112), // Descendant of Storms: 1
+        Box(613, 96, 800, 112), // Enduring Bondwarden: 1
+        Box(912, 96, 1060, 112),// Ethereal Armor: 4 (gold border, black background)
+    )
+
+    @Test fun readsDiamondsOnDarkBackground() {
+        for ((dx, dy) in listOf(0 to 0, -12 to -8, 12 to 8, -6 to 10, 10 to -10)) {
+            val got = darkNames.map {
+                PipCounter.count(darkLuma, darkW, darkH, Box(it.left + dx, it.top + dy, it.right + dx, it.bottom + dy), 254).count
+            }
+            assertEquals("offset $dx,$dy", listOf(1, 1, 1, 4), got)
+        }
     }
 
     @Test fun settleWaitsForStillnessAndNewContent() {

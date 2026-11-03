@@ -57,7 +57,7 @@ object Layout {
     const val NAME_INSET = 0.071   // name text starts this far in from the card's left edge
     const val PIP_ABOVE = 0.17     // diamond row centre sits this far above the top of the name text
     const val PIP_PITCH = 0.109    // spacing between the 4 diamonds
-    const val PIP_RADIUS = 0.036   // half-width of one diamond
+    const val PIP_RADIUS = 0.043   // half-width of one diamond (it is 0.039 W tall)
     const val CARD_PER_PITCH = 0.852 // card width ÷ distance between neighbouring cards
 
     /** Card width from the spacing of card names in the same row; falls back to Arena's usual size. */
@@ -91,16 +91,26 @@ object Layout {
 /** What was read for one card: copies owned (null = unreadable) and where the 4 diamonds were found. */
 data class PipRead(val count: Int?, val slots: List<Pair<Int, Int>>)
 
+/**
+ * Thresholds measured on ~3,000 diamonds from a real recording: an owned diamond's dimmest edge
+ * point is ≥ 55 and its centre ≤ 9; an empty one's edge is ≤ 47 (even on near-black backgrounds).
+ */
 object PipCounter {
+    private const val MIN_CONTRAST = 48.0
+    private const val MAX_CENTRE = 16.0
+    private const val MIN_EDGE = 52.0
+    private const val MIN_ALIGNMENT = 60.0
+
     /**
-     * Counts owned copies from the 4 diamonds above a card. An owned copy is a near-black diamond with
-     * a bright outline; an unowned slot has a faint outline. Owned diamonds always fill from the left.
-     * Searches around the expected spot so a few pixels of error in the name box don't matter.
+     * Counts owned copies (1–4) from the 4 diamonds above a card, or null if they can't be read.
+     * Finds the diamond row by searching around the expected spot, then checks each diamond.
+     * Never returns 0: Arena's collection only shows cards you own, so 0 means a misread.
      */
     fun count(luma: (Int, Int) -> Int, w: Int, h: Int, name: Box, cardW: Int): PipRead {
         val (ex, ey) = Layout.firstPip(name, cardW)
         val p = Layout.PIP_PITCH * cardW
-        val r = Layout.PIP_RADIUS * cardW
+        val rx = 0.043 * cardW
+        val ry = 0.039 * cardW
         val range = max(4, (0.07 * cardW).toInt())
         var bestTotal = -1.0
         var bestDx = 0
@@ -110,43 +120,49 @@ object PipCounter {
             var dx = -range
             while (dx <= range) {
                 var total = 0.0
-                for (i in 0 until 4) total += max(0.0, slot(luma, w, h, ex + dx + i * p, ey + dy, r)[0])
+                for (i in 0 until 4) total += max(0.0, slot(luma, w, h, ex + dx + i * p, ey + dy, rx, ry)[0])
                 if (total > bestTotal) { bestTotal = total; bestDx = dx; bestDy = dy }
                 dx += 2
             }
             dy += 2
         }
         val slots = (0 until 4).map { (ex + bestDx + it * p).toInt() to (ey + bestDy).toInt() }
-        if (bestTotal < 100) return PipRead(null, slots)
-        val owned = (0 until 4).map {
-            val s = slot(luma, w, h, ex + bestDx + it * p, ey + bestDy, r)
-            s[0] >= 85 && s[1] < 45 && s[2] >= 105
-        }
+        if (bestTotal < MIN_ALIGNMENT) return PipRead(null, slots)
+        val owned = (0 until 4).map { i -> isOwned(luma, w, h, ex + bestDx + i * p, ey + bestDy, rx, ry) }
         val n = owned.count { it }
         // Owned copies are always the leftmost diamonds; anything else is a misread.
-        if (owned != List(n) { true } + List(4 - n) { false }) return PipRead(null, slots)
+        if (n == 0 || owned != List(n) { true } + List(4 - n) { false }) return PipRead(null, slots)
         return PipRead(n, slots)
     }
 
-    /** [contrast, centre brightness, outline brightness] for a diamond centred at (cx, cy). */
-    private fun slot(luma: (Int, Int) -> Int, w: Int, h: Int, cx: Double, cy: Double, r: Double): DoubleArray {
+    /** Owned if any spot within 2 px of the slot centre looks like a filled diamond. */
+    private fun isOwned(luma: (Int, Int) -> Int, w: Int, h: Int, cx: Double, cy: Double, rx: Double, ry: Double): Boolean {
+        for (ddy in -2..2) for (ddx in -2..2) {
+            val s = slot(luma, w, h, cx + ddx, cy + ddy, rx, ry)
+            if (s[0] >= MIN_CONTRAST && s[1] < MAX_CENTRE && s[2] >= MIN_EDGE) return true
+        }
+        return false
+    }
+
+    /**
+     * [contrast, centre brightness, dimmest edge] for a diamond centred at (cx, cy). The edges are
+     * sampled at the middle of each of the 4 sides (the corners are dim), taking the brightest
+     * pixel within 2 px to allow for blur.
+     */
+    private fun slot(luma: (Int, Int) -> Int, w: Int, h: Int, cx: Double, cy: Double, rx: Double, ry: Double): DoubleArray {
         val x = Math.round(cx).toInt(); val y = Math.round(cy).toInt()
-        if (x < 3 || y < 3 || x >= w - 3 || y >= h - 3) return doubleArrayOf(0.0, 255.0, 0.0)
+        if (x < 8 || y < 8 || x >= w - 8 || y >= h - 8) return doubleArrayOf(0.0, 255.0, 0.0)
         fun peak(px: Double, py: Double): Int {
             val ix = Math.round(px).toInt(); val iy = Math.round(py).toInt()
-            if (ix < 1 || iy < 1 || ix >= w - 1 || iy >= h - 1) return 0
             var m = 0
-            for (yy in iy - 1..iy + 1) for (xx in ix - 1..ix + 1) m = max(m, luma(xx, yy))
+            for (yy in iy - 2..iy + 2) for (xx in ix - 2..ix + 2) m = max(m, luma(xx, yy))
             return m
         }
-        val h2 = r / 2
-        val edge = intArrayOf(
-            peak(cx + r, cy), peak(cx - r, cy), peak(cx, cy + r), peak(cx, cy - r),
-            peak(cx + h2, cy + h2), peak(cx - h2, cy + h2), peak(cx + h2, cy - h2), peak(cx - h2, cy - h2),
-        ).sorted().drop(2).average() // ignore the 2 weakest points (anti-aliasing, video blur)
+        val hx = rx / 2; val hy = ry / 2
+        val e = intArrayOf(peak(cx + hx, cy + hy), peak(cx - hx, cy + hy), peak(cx + hx, cy - hy), peak(cx - hx, cy - hy))
         var sum = 0
         for (yy in y - 2..y + 2) for (xx in x - 2..x + 2) sum += luma(xx, yy)
         val centre = sum / 25.0
-        return doubleArrayOf(edge - centre, centre, edge)
+        return doubleArrayOf(e.average() - centre, centre, e.min().toDouble())
     }
 }

@@ -66,6 +66,7 @@ class MainActivity : Activity() {
         dbButton = Button(this).apply { setOnClickListener { downloadCards() } }
         scanButton = Button(this).apply { setOnClickListener { toggleScan() } }
         val exportButton = Button(this).apply { text = "Export to collection page"; setOnClickListener { export() } }
+        val csvButton = Button(this).apply { text = "Save as CSV file"; setOnClickListener { saveCsv() } }
         val clearButton = Button(this).apply { text = "Clear collection"; setOnClickListener { confirmClear() } }
         val debugButton = Button(this).apply { text = "Save last scan image"; setOnClickListener { saveDebugImage() } }
         val help = TextView(this).apply {
@@ -80,7 +81,7 @@ class MainActivity : Activity() {
         summary = TextView(this).apply { textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, pad / 2) }
         val list = ListView(this).apply { adapter = this@MainActivity.adapter }
 
-        for (v in listOf(heading, status, dbButton, scanButton, exportButton, clearButton, debugButton, help, summary)) root.addView(v)
+        for (v in listOf(heading, status, dbButton, scanButton, exportButton, csvButton, clearButton, debugButton, help, summary)) root.addView(v)
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         title = "Arena Scanner"
@@ -177,6 +178,27 @@ class MainActivity : Activity() {
         getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Arena collection", text))
         toast("Copied. Paste it into \"Paste a list of cards\" on your Arena Collection page.")
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Share collection"))
+    }
+
+    /**
+     * Saves the collection as a CSV file in Downloads/ArenaScanner (opens in Sheets, Excel, Moxfield
+     * import, etc.), then offers to share it.
+     */
+    private fun saveCsv() {
+        if (CollectionStore.all(this).isEmpty()) { toast("Nothing to save yet. Scan some cards first."); return }
+        val name = "arena_collection_${java.text.SimpleDateFormat("yyyy-MM-dd_HHmm", java.util.Locale.US).format(java.util.Date())}.csv"
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, name)
+            put(MediaStore.Downloads.MIME_TYPE, "text/csv")
+            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/ArenaScanner")
+        }
+        val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        if (uri == null) { toast("Couldn't create the file in Downloads."); return }
+        contentResolver.openOutputStream(uri)?.use { it.write(CollectionStore.exportCsv(this).toByteArray()) }
+        toast("Saved Downloads/ArenaScanner/$name")
+        val share = Intent(Intent.ACTION_SEND).setType("text/csv").putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        startActivity(Intent.createChooser(share, "Share CSV"))
     }
 
     /**
