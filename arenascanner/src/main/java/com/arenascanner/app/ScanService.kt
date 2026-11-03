@@ -394,17 +394,13 @@ class ScanService : Service() {
     private fun readBoard(bmp: Bitmap) {
         recognizer.process(InputImage.fromBitmap(bmp, 0))
             .addOnSuccessListener { text ->
-                val all = text.textBlocks.flatMap { it.lines }
-                val lines = all.map { it.text }
-                val mulligan = CoachPrompt.isMulligan(lines)
-                val cards = all.mapNotNull { l ->
-                    val c = matcher.match(l.text) ?: return@mapNotNull null
-                    val cy = (l.boundingBox?.exactCenterY() ?: 0f) / bmp.height
-                    c to CoachPrompt.zoneOf(cy, mulligan)
+                val seen = text.textBlocks.flatMap { it.lines }.mapNotNull { l ->
+                    val r = l.boundingBox ?: return@mapNotNull null
+                    CoachPrompt.Seen(l.text, r.exactCenterX() / bmp.width, r.exactCenterY() / bmp.height, r.height().toFloat() / bmp.height)
                 }
-                val matched = cards.map { Matcher.normalize(it.first.name) }.toSet()
-                val other = lines.filter { Matcher.normalize(it) !in matched }
-                val prompt = CoachPrompt.build(cards, other)
+                val board = CoachPrompt.analyze(seen) { matcher.match(it) }
+                val cards = board.cards
+                val prompt = CoachPrompt.build(board)
                 val image = jpeg(bmp, 1024)
                 showPanel("Thinking… (${cards.distinctBy { it.first.name }.size} cards read)")
                 coachExec.execute { askGemma(image, prompt) }

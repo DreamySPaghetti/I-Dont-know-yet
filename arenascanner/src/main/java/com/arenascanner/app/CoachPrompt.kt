@@ -24,7 +24,8 @@ object CoachPrompt {
         "If the screen shows the opening-hand choice (Mulligan / Keep buttons), answer instead:\n" +
         "PLAY: KEEP or MULLIGAN.\n" +
         "WHY: count lands and spells. Keep 7 cards with 2-5 lands and plays on turns 1-3; mulligan 0-1 or 6-7 land hands.\n" +
-        "If it is not the player's turn or the screen is unclear, say so in one line instead."
+        "If the opponent is attacking, answer which blocks to make. Use the current step given in the question.\n" +
+        "If the screen is unclear, say so in one line instead."
 
     /** Short rules reminders, added only for keywords that appear on the visible cards. */
     val KEYWORDS = linkedMapOf(
@@ -52,38 +53,122 @@ object CoachPrompt {
     /** Where a card was seen: decides whether it's in your hand, on your side, or the opponent's. */
     enum class Zone(val label: String) { HAND("Your hand"), MINE("Your battlefield"), THEIRS("Opponent's battlefield"), OPENING("Opening hand") }
 
-    /** Zone from the vertical centre of the card's name on screen (fraction of screen height). */
-    fun zoneOf(centreY: Float, mulligan: Boolean) = when {
-        mulligan -> Zone.OPENING
-        centreY < 0.45f -> Zone.THEIRS
-        centreY < 0.72f -> Zone.MINE
-        else -> Zone.HAND
+    /** One line of text read from the screen; positions and height are fractions of the screen size. */
+    data class Seen(val text: String, val cx: Float, val cy: Float, val h: Float)
+
+    /** What the coach knows about the board, worked out from the text on screen. */
+    data class Board(
+        val cards: List<Pair<Card, Zone>>,
+        val lands: Map<Zone, Map<String, Int>>,
+        val creatures: Map<Zone, List<String>>,
+        val lifeYou: Int?,
+        val lifeOpp: Int?,
+        val phase: Phase,
+        val other: List<String>,
+    )
+
+    enum class Phase(val note: String, val question: String) {
+        MULLIGAN("This is my opening hand.", "Should I keep it or mulligan? Answer in exactly this format:\nPLAY: KEEP or MULLIGAN\nWHY: ..."),
+        BLOCK("The opponent is attacking me right now and I must choose blockers.",
+            "Which of my creatures should block which attacker, or should I not block? Answer in exactly this format:\nPLAY: ...\nWHY: ..."),
+        ATTACK("It is my turn and I am choosing attackers.",
+            "Which of my creatures should attack? Answer in exactly this format:\nPLAY: ...\nWHY: ..."),
+        MAIN1("It is my first main phase, before combat.", "What is my best play this turn? Answer in exactly this format:\nPLAY: ...\nWHY: ..."),
+        MAIN2("It is my second main phase, after combat.", "What should I do before ending my turn? Answer in exactly this format:\nPLAY: ...\nWHY: ..."),
+        OPPONENT("It is the opponent's turn.", "What should I watch for or do on the opponent's turn? Answer in exactly this format:\nPLAY: ...\nWHY: ..."),
+        UNKNOWN("", "What is my best play this turn? Answer in exactly this format:\nPLAY: ...\nWHY: ..."),
     }
+
+    private val BASIC = setOf("plains", "island", "swamp", "mountain", "forest", "wastes")
+    private val PT = Regex("^\\d{1,2}/\\d{1,2}$")
+    private val LIFE = Regex("^\\d{1,3}$")
 
     fun isMulligan(text: List<String>) =
         text.any { it.contains("Mulligan", ignoreCase = true) } && text.any { it.trim().startsWith("Keep", ignoreCase = true) }
 
+    /** Arena's own button and prompt text tells us the step of the turn. */
+    fun phaseOf(text: List<String>): Phase {
+        val t = text.joinToString(" | ").lowercase()
+        return when {
+            isMulligan(text) -> Phase.MULLIGAN
+            "choose blockers" in t || "no blocks" in t -> Phase.BLOCK
+            "no attacks" in t || "all attack" in t || "choose attackers" in t || Regex("\\battack\\b").containsMatchIn(t) && "to damage" in t -> Phase.ATTACK
+            "to combat" in t -> Phase.MAIN1
+            "end turn" in t || "to end" in t -> Phase.MAIN2
+            "opponent's turn" in t || "opponent\u2019s turn" in t -> Phase.OPPONENT
+            else -> Phase.UNKNOWN
+        }
+    }
+
     /**
-     * The question sent with the screenshot.
-     * [cards]: cards recognised on screen with the zone each was seen in.
-     * [otherText]: other short text read from the screen, e.g. life totals, phase, button labels.
+     * Zone from screen position (landscape Arena): the opponent's half is above 44 % of the height.
+     * On my half, hand cards are drawn large, so their names are taller than names on the battlefield.
      */
-    fun build(cards: List<Pair<Card, Zone>>, otherText: List<String>, maxCards: Int = 25): String {
+    fun zoneOf(s: Seen, mulligan: Boolean) = when {
+        mulligan -> Zone.OPENING
+        s.cy < 0.44f -> Zone.THEIRS
+        s.cy > 0.62f && s.h >= 0.011f -> Zone.HAND
+        else -> Zone.MINE
+    }
+
+    fun analyze(lines: List<Seen>, match: (String) -> Card?): Board {
+        val texts = lines.map { it.text }
+        val phase = phaseOf(texts)
+        val mull = phase == Phase.MULLIGAN
+        val cards = mutableListOf<Pair<Card, Zone>>()
+        val lands = linkedMapOf<Zone, MutableMap<String, Int>>()
+        val creatures = linkedMapOf<Zone, MutableList<String>>()
+        var lifeYou: Int? = null
+        var lifeOpp: Int? = null
+        val other = mutableListOf<String>()
+        for (s in lines) {
+            val t = s.text.trim()
+            val norm = Matcher.normalize(t)
+            val zone = zoneOf(s, mull)
+            when {
+                norm in BASIC -> lands.getOrPut(zone) { linkedMapOf() }.merge(t.replaceFirstChar { it.uppercase() }, 1, Int::plus)
+                PT.matches(t) && s.cy < 0.8f -> creatures.getOrPut(if (s.cy < 0.44f) Zone.THEIRS else Zone.MINE) { mutableListOf() }.add(t)
+                LIFE.matches(t) && kotlin.math.abs(s.cx - 0.5f) < 0.07f && (s.cy < 0.15f || s.cy > 0.82f) ->
+                    if (s.cy < 0.15f) lifeOpp = t.toInt() else lifeYou = t.toInt()
+                else -> {
+                    val c = if ("basic land" in norm) null else match(t)
+                    if (c != null) cards += c to zone else other += t
+                }
+            }
+        }
+        return Board(cards, lands, creatures, lifeYou, lifeOpp, phase, other)
+    }
+
+    fun build(board: Board, maxCards: Int = 25): String {
         val sb = StringBuilder()
         sb.append("This is a screenshot of my MTG Arena game on my phone. My side is the bottom half of the screen ")
-            .append("and my hand is along the bottom edge; my opponent is the top half.\n\n")
-        val unique = cards.distinctBy { it.first.name }.take(maxCards)
+            .append("and my hand is along the bottom edge; my opponent is the top half.\n")
+        if (board.phase.note.isNotEmpty()) sb.append("Current step: ").append(board.phase.note).append('\n')
+        if (board.lifeYou != null || board.lifeOpp != null)
+            sb.append("Life: me ${board.lifeYou ?: "?"}, opponent ${board.lifeOpp ?: "?"}.\n")
+        sb.append('\n')
+        val unique = board.cards.distinctBy { it.first.name to it.second }.take(maxCards)
         for (zone in Zone.values()) {
             val inZone = unique.filter { it.second == zone }
-            if (inZone.isEmpty()) continue
+            val lands = board.lands[zone].orEmpty()
+            val pts = board.creatures[zone].orEmpty()
+            if (inZone.isEmpty() && lands.isEmpty() && pts.isEmpty()) continue
             sb.append(zone.label).append(":\n")
             for ((c, _) in inZone) {
                 sb.append("- ").append(c.name)
                 if (c.rules.isNotEmpty()) sb.append(": ").append(c.rules.take(320))
                 sb.append('\n')
             }
+            if (lands.isNotEmpty()) {
+                val what = lands.entries.joinToString(", ") { "${it.key} x${it.value}" }
+                if (zone == Zone.HAND || zone == Zone.OPENING) sb.append("- Basic lands: ").append(what).append('\n')
+                else sb.append("- Lands already in play (at least): ").append(what).append(" (stacked lands may hide more)\n")
+            }
+            if (pts.isNotEmpty()) sb.append("- Creatures' power/toughness shown: ").append(pts.joinToString(", ")).append('\n')
             sb.append('\n')
         }
+        if (board.lands[Zone.MINE].isNullOrEmpty().not())
+            sb.append("Lands already on my battlefield are in play: don't tell me to play them again. Only one land can be played per turn.\n\n")
         val text = unique.joinToString(" ") { it.first.rules.lowercase() }
         val kw = KEYWORDS.filterKeys { Regex("\\b" + Regex.escape(it) + "\\b").containsMatchIn(text) }
         if (kw.isNotEmpty()) {
@@ -91,10 +176,9 @@ object CoachPrompt {
             for ((k, v) in kw) sb.append("- ").append(k).append(": ").append(v).append('\n')
             sb.append('\n')
         }
-        val other = otherText.map { it.trim() }.filter { it.length in 1..40 }.distinct().joinToString(" | ").take(500)
-        if (other.isNotEmpty()) sb.append("Other text on screen (life totals, mana, phase, buttons): ").append(other).append("\n\n")
-        if (isMulligan(otherText)) sb.append("This is my opening hand. Should I keep it or mulligan? Answer in exactly this format:\nPLAY: KEEP or MULLIGAN\nWHY: ...")
-        else sb.append("What is my best play this turn? Answer in exactly this format:\nPLAY: ...\nWHY: ...")
+        val other = board.other.map { it.trim() }.filter { it.length in 1..40 }.distinct().joinToString(" | ").take(400)
+        if (other.isNotEmpty()) sb.append("Other text on screen (buttons, prompts): ").append(other).append("\n\n")
+        sb.append(board.phase.question)
         return sb.toString()
     }
 }
