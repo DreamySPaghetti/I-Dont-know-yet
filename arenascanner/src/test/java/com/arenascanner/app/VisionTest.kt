@@ -5,19 +5,19 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import javax.imageio.ImageIO
 
 class VisionTest {
     /**
-     * arena_row.png: a strip from a real Arena collection recording (2340×1080 phone, landscape),
-     * showing the diamonds and name bars of the first 4 cards in the top row.
+     * arena_row.luma: a strip from a real Arena collection recording (2340×1080 phone, landscape),
+     * showing the diamonds and name bars of the first 4 cards in the top row. Stored as brightness
+     * bytes (after an 8-byte width/height header) because Android unit tests have no image decoder.
+     * arena_row.png is the same strip as a picture, for people.
      * Names start at x = 71, 370, 669, 967 with their text top at y ≈ 80.
      */
-    private val strip = ImageIO.read(javaClass.getResourceAsStream("/arena_row.png"))
-    private val luma = { x: Int, y: Int ->
-        val p = strip.getRGB(x, y)
-        (((p shr 16) and 0xFF) * 3 + ((p shr 8) and 0xFF) * 6 + (p and 0xFF)) / 10
-    }
+    private val bytes = javaClass.getResourceAsStream("/arena_row.luma")!!.readBytes()
+    private val width = java.nio.ByteBuffer.wrap(bytes, 0, 8).int
+    private val height = java.nio.ByteBuffer.wrap(bytes, 4, 4).int
+    private val luma = { x: Int, y: Int -> bytes[8 + y * width + x].toInt() and 0xFF }
     private val names = listOf(
         Box(71, 80, 300, 96),   // Insatiable Skittermaw: 3 owned
         Box(370, 80, 530, 96),  // Loot, the Anomaly: 1 owned
@@ -26,7 +26,7 @@ class VisionTest {
     )
     private val expected = listOf(3, 1, 2, 1)
 
-    private fun read(name: Box, cardW: Int) = PipCounter.count(luma, strip.width, strip.height, name, cardW).count
+    private fun read(name: Box, cardW: Int) = PipCounter.count(luma, width, height, name, cardW).count
 
     @Test fun cardWidthFromRealSpacing() {
         val w = Layout.cardWidth(names, 2340, 1080)
