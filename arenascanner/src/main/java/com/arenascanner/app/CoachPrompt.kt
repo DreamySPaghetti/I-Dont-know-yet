@@ -54,7 +54,10 @@ object CoachPrompt {
     enum class Zone(val label: String) { HAND("Your hand"), MINE("Your battlefield"), THEIRS("Opponent's battlefield"), OPENING("Opening hand") }
 
     /** One line of text read from the screen; positions and height are fractions of the screen size. */
-    data class Seen(val text: String, val cx: Float, val cy: Float, val h: Float, val glow: Float = -1f)
+    data class Seen(val text: String, val cx: Float, val cy: Float, val h: Float, val glow: Float = -1f, val angle: Float = 0f) {
+        /** Arena turns tapped permanents sideways, so their text reads at about ±90°. */
+        val tapped get() = kotlin.math.abs(angle) in 45f..135f
+    }
 
     /** Arena outlines cards you can play right now in bright blue; measured on real screenshots (≥17 % vs ≤4 %). */
     const val GLOW_MIN = 0.10f
@@ -96,6 +99,9 @@ object CoachPrompt {
         val notPlayable: Set<String> = emptySet(),
         /** Battlefield creatures with names and abilities, when P/T boxes could be linked to names. */
         val fighters: Map<Zone, List<Fighter>> = emptyMap(),
+        /** Untapped lands I control (mana available now), when tapped/untapped could be read. */
+        val untappedLands: Int? = null,
+        val totalLands: Int? = null,
     )
 
     enum class Phase(val note: String, val question: String) {
@@ -165,6 +171,8 @@ object CoachPrompt {
         val notPlayable = mutableSetOf<String>()
         var measured = false
         val ptSeen = mutableListOf<Pair<Seen, Zone>>()
+        var myLands = 0
+        var myUntapped = 0
         val cardSeen = mutableListOf<Triple<Card, Seen, Zone>>()
         val handH = lines.filter { it.cy > 0.6f && (Matcher.normalize(it.text) in BASIC || match(it.text.trim()) != null) }
             .maxOfOrNull { it.h } ?: 0f
@@ -186,6 +194,7 @@ object CoachPrompt {
                         else stacks.filter { (b, _) -> kotlin.math.abs(b.cx - s.cx) < 0.07f && kotlin.math.abs(b.cy - s.cy) < 0.07f }
                             .minByOrNull { (b, _) -> kotlin.math.abs(b.cx - s.cx) + kotlin.math.abs(b.cy - s.cy) }?.second ?: 1
                     lands.getOrPut(zone) { linkedMapOf() }.merge(t.replaceFirstChar { it.uppercase() }, n, Int::plus)
+                    if (zone == Zone.MINE) { myLands += n; if (!s.tapped) myUntapped += n }
                 }
                 STACK.matches(t) -> {}
                 PT.matches(t) && s.cy < 0.8f -> {
@@ -197,7 +206,11 @@ object CoachPrompt {
                     if (s.cy < 0.15f) lifeOpp = t.toInt() else lifeYou = t.toInt()
                 else -> {
                     val c = if ("basic land" in norm) null else match(t)
-                    if (c != null) { cards += c to zone; if (zone == Zone.MINE || zone == Zone.THEIRS) cardSeen += Triple(c, s, zone) } else other += t
+                    if (c != null) {
+                        cards += c to zone
+                        if (zone == Zone.MINE || zone == Zone.THEIRS) cardSeen += Triple(c, s, zone)
+                        if (zone == Zone.MINE && isLand(c)) { myLands++; if (!s.tapped) myUntapped++ }
+                    } else other += t
                 }
             }
         }
@@ -209,12 +222,16 @@ object CoachPrompt {
             val best = cardSeen.withIndex()
                 .filter { (i, c) -> i !in used && c.third == z && p.cy - c.second.cy in 0.03f..0.2f && kotlin.math.abs(p.cx - c.second.cx) < 0.07f }
                 .minByOrNull { (_, c) -> kotlin.math.abs(p.cx - c.second.cx) + (p.cy - c.second.cy) }
-            val f = if (best == null) Fighter(p.text.trim(), pw, tg)
-                else { used += best.index; Fighter("${best.value.first.name} ${p.text.trim()}", pw, tg, combatKeywords(best.value.first)) }
+            val f = if (best == null) Fighter(p.text.trim(), pw, tg, tapped = p.tapped)
+                else {
+                    used += best.index
+                    Fighter("${best.value.first.name} ${p.text.trim()}", pw, tg, combatKeywords(best.value.first), p.tapped || best.value.second.tapped)
+                }
             fighters.getOrPut(z) { mutableListOf() }.add(f)
         }
         return Board(cards, lands, creatures, lifeYou, lifeOpp, phase, other,
-            if (measured) playable else null, notPlayable - playable, fighters)
+            if (measured) playable else null, notPlayable - playable, fighters,
+            if (myLands > 0 && lines.any { it.angle != 0f }) myUntapped else null, if (myLands > 0) myLands else null)
     }
 
     /**
@@ -260,7 +277,7 @@ object CoachPrompt {
     private fun pt(s: String): Pair<Int, Int>? = Regex("^(\\d+)/(\\d+)$").find(s)?.let { it.groupValues[1].toInt() to it.groupValues[2].toInt() }
 
     /** A creature on the battlefield for combat math: its power/toughness box, linked to its name when found. */
-    data class Fighter(val label: String, val p: Int, val t: Int, val kw: Set<String> = emptySet())
+    data class Fighter(val label: String, val p: Int, val t: Int, val kw: Set<String> = emptySet(), val tapped: Boolean = false)
 
     private val COMBAT_KW = listOf("flying", "reach", "deathtouch", "first strike", "double strike", "menace", "indestructible", "trample", "defender")
 
@@ -291,11 +308,21 @@ object CoachPrompt {
 
     /** Combat math from power/toughness plus key abilities (flying, deathtouch, first strike, ...). */
     fun combatFacts(b: Board): String? {
-        val mine = fighters(b, Zone.MINE).distinctBy { it.label }
-        val theirs = fighters(b, Zone.THEIRS).distinctBy { it.label }
-        if (mine.isEmpty() || theirs.isEmpty()) return null
+        val allMine = fighters(b, Zone.MINE).distinctBy { it.label }
+        val allTheirs = fighters(b, Zone.THEIRS).distinctBy { it.label }
+        if (allMine.isEmpty() || allTheirs.isEmpty()) return null
+        // Tapped creatures can't block or attack. While I'm blocking, their tapped creatures are the attackers.
+        val mine = allMine.filter { !it.tapped }
+        val theirs = when (b.phase) {
+            Phase.BLOCK -> allTheirs.filter { it.tapped }.ifEmpty { allTheirs }
+            else -> allTheirs.filter { !it.tapped }
+        }
+        if (mine.isEmpty() && b.phase == Phase.BLOCK) return "Combat: all your creatures are tapped, so you can't block.\n"
+        if (mine.isEmpty()) return null
         fun name(f: Fighter) = f.label + if (f.kw.isEmpty()) "" else " (" + f.kw.joinToString(", ") + ")"
         val sb = StringBuilder("Combat math (power/toughness and key abilities; other abilities ignored):\n")
+        if (b.phase == Phase.BLOCK && allTheirs.any { it.tapped }) sb.append("- Attacking you (tapped): ").append(theirs.joinToString(", ") { name(it) }).append('\n')
+        if (b.phase != Phase.BLOCK && theirs.isEmpty()) sb.append("- All their creatures are tapped: nothing can block.\n")
         when (b.phase) {
             Phase.BLOCK -> for (att in theirs) {
                 if (att.p == 0 && "defender" in att.kw) continue
@@ -319,6 +346,7 @@ object CoachPrompt {
             Phase.ATTACK, Phase.MAIN1 -> for (att in mine) {
                 if (att.p == 0 || "defender" in att.kw) continue
                 val blockers = theirs.filter { canBlock(it, att) }
+                if (theirs.isEmpty()) continue
                 sb.append("- Your ${name(att)} attacking: ")
                 if (blockers.isEmpty()) { sb.append("nothing they have can block it\n"); continue }
                 val killers = blockers.filter { fight(att, it).first }.map { it.label }.distinct()
@@ -444,6 +472,8 @@ object CoachPrompt {
             sb.append('\n')
         }
         openingFacts(board)?.let { sb.append(it).append("\n\n") }
+        if (board.untappedLands != null && board.phase in setOf(Phase.MAIN1, Phase.MAIN2, Phase.UNKNOWN))
+            sb.append("Mana: ${board.untappedLands} of my ${board.totalLands} lands are untapped, so I have about ${board.untappedLands} mana available now.\n\n")
         combatFacts(board)?.let { sb.append(it).append('\n') }
         // Small models follow what's closest to the question, so repeat the hard limits here.
         if (board.phase in setOf(Phase.MAIN1, Phase.MAIN2, Phase.UNKNOWN, Phase.ATTACK)) {

@@ -533,7 +533,7 @@ class ScanService : Service() {
                     val cy = r.exactCenterY() / h
                     // Only hand cards (bottom of my side) get the "playable" outline check.
                     val glow = if (cy > 0.62f) CoachPrompt.glowFraction(rgb, w, h, r.left, r.top, r.right, r.bottom) else -1f
-                    CoachPrompt.Seen(l.text, r.exactCenterX() / w, cy, r.height().toFloat() / h, glow)
+                    CoachPrompt.Seen(l.text, r.exactCenterX() / w, cy, r.height().toFloat() / h, glow, l.angle)
                 }
                 val board = CoachPrompt.analyze(seen) { matcher.match(it) }
                 val cards = board.cards

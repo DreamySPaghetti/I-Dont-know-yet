@@ -167,6 +167,27 @@ class CoachPromptTest {
         assertTrue(CoachPrompt.combatFacts(blk)!!.contains("DANGER: their creatures have 4 power and you're at 3"))
     }
 
+    @Test fun tappedCardsChangeManaAndCombat() {
+        val b = CoachPrompt.analyze(listOf(
+            Seen("x3", 0.09f, 0.70f, 0.012f),
+            Seen("Island", 0.107f, 0.67f, 0.007f),                    // untapped stack of 3
+            Seen("Island", 0.20f, 0.67f, 0.007f, angle = 90f),       // one tapped Island
+            Seen("To Combat", 0.88f, 0.98f, 0.015f),
+        ), match)
+        assertEquals(3, b.untappedLands)
+        assertEquals(4, b.totalLands)
+        assertTrue(CoachPrompt.build(b).contains("3 of my 4 lands are untapped"))
+
+        val attacker = CoachPrompt.Fighter("Bear 2/2", 2, 2, tapped = true)
+        val idle = CoachPrompt.Fighter("Ox 5/5", 5, 5)
+        val wall = CoachPrompt.Fighter("Wall 0/5", 0, 5)
+        val blk = CoachPrompt.Board(emptyList(), emptyMap(), emptyMap(), 20, 20, CoachPrompt.Phase.BLOCK, emptyList(),
+            fighters = mapOf(Zone.THEIRS to listOf(attacker, idle), Zone.MINE to listOf(wall)))
+        val f = CoachPrompt.combatFacts(blk)!!
+        assertTrue(f, f.contains("Attacking you (tapped): Bear 2/2"))
+        assertFalse(f, f.contains("If their Ox 5/5 attacks"))
+    }
+
     @Test fun attackMath() {
         val b = CoachPrompt.Board(emptyList(), emptyMap(), mapOf(Zone.MINE to listOf("5/3", "1/1"), Zone.THEIRS to listOf("2/2", "0/5")),
             null, null, CoachPrompt.Phase.ATTACK, emptyList())
