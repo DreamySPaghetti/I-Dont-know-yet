@@ -41,6 +41,9 @@ class MainActivity : Activity() {
     private lateinit var updateButton: Button
     private var query = ""
     private var rarityFilter: String? = null
+    private var sortMode = 0      // 0 name, 1 rarity, 2 copies, 3 newest
+    private var showMode = 0      // 0 all, 1 added by the last scan, 2 worth checking
+    private lateinit var emptyCard: View
     private lateinit var autoScrollBox: android.widget.CompoundButton
     private lateinit var listBox: LinearLayout
     private val density get() = resources.displayMetrics.density
@@ -65,6 +68,15 @@ class MainActivity : Activity() {
         updateButton = primaryButton("Update available", GOOD) { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Updates.APK_URL))) }
             .apply { visibility = View.GONE; layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) } }
         col.addView(updateButton)
+
+        // First run: what to do
+        emptyCard = card(
+            titleText("Get started"),
+            bodyText("1. Tap Start scanning below and allow screen capture.\n" +
+                "2. MTG Arena opens: go to Decks → Collection.\n" +
+                "3. Scroll through your cards (or turn on auto-scroll) and watch the count climb."),
+        )
+        col.addView(emptyCard)
 
         // Collection
         scanButton = primaryButton("Start scanning") { toggleScan() }
@@ -94,7 +106,7 @@ class MainActivity : Activity() {
             rowOf(tonalButton("Save CSV") { saveCsv() }, tonalButton("Import CSV") {
                 @Suppress("DEPRECATION") startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_IMPORT)
             }),
-            rowOf(tonalButton("Copy for web page") { export() }, tonalButton("Save scan image") { saveDebugImage() }),
+            rowOf(tonalButton("Copy list") { export() }, tonalButton("Save scan image") { saveDebugImage() }),
             helpLink, help,
         ))
 
@@ -123,6 +135,17 @@ class MainActivity : Activity() {
         summary = mutedText("")
         val search = field("Search your cards").apply {
             id = 4243; isSingleLine = true
+        }
+        val searchRow = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(search, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(TextView(context).apply {
+                text = "✕"; textSize = 18f; gravity = Gravity.CENTER; setTextColor(muted()); contentDescription = "Clear search"
+                setOnClickListener { search.setText("") }
+            }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        }
+        search.apply {
+            id = 4243; isSingleLine = true
             addTextChangedListener(object : android.text.TextWatcher {
                 override fun afterTextChanged(s: android.text.Editable?) { query = s.toString().trim().lowercase(); refresh() }
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -131,7 +154,9 @@ class MainActivity : Activity() {
         }
         val rarityChips = chips(listOf("All", "Mythic", "Rare", "Uncommon", "Common"), 0) { i -> rarityFilter = listOf(null, "M", "R", "U", "C")[i]; refresh() }
         listBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(card(titleText("Your cards"), summary, search, rarityChips, listBox))
+        val showChips = chips(listOf("All", "New in last scan", "Worth checking"), 0) { i -> showMode = i; refresh() }
+        val sortChips = chips(listOf("A–Z", "Rarity", "Copies", "Newest"), 0) { i -> sortMode = i; refresh() }
+        col.addView(card(titleText("Your cards"), summary, searchRow, showChips, rarityChips, mutedText("Sort"), sortChips, listBox))
 
         setContentView(page(col))
     }
@@ -146,7 +171,7 @@ class MainActivity : Activity() {
             setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
             background = rounded(Color.argb(40, Color.red(rc), Color.green(rc), Color.blue(rc)), 8)
         }, LinearLayout.LayoutParams(dp(28), dp(24)))
-        addView(bodyText(o.name, 15f).apply {
+        addView(bodyText(o.name + if (o.uncertain) "  ·  check" else "", 15f).apply {
             setPadding(dp(10), 0, dp(8), 0)
             setOnClickListener { showCard(o) }
         }, LinearLayout.LayoutParams(0, -2, 1f))
@@ -185,17 +210,37 @@ class MainActivity : Activity() {
         }
         dbButton.text = if (ready) "Update card list" else "Download card list"
         scanButton.text = if (ScanService.running) "Stop scanning" else "Start scanning"
+        repaint(scanButton, Color.parseColor(if (ScanService.running) "#C0392B" else PRIMARY))
         autoScrollBox.text = if (autoScrollBox.isChecked && AutoScroll.instance == null) "Auto-scroll (needs Accessibility setup)" else "Auto-scroll while scanning"
         val all = CollectionStore.all(this)
-        val shown = all.filter { (query.isEmpty() || query in it.name.lowercase()) && (rarityFilter == null || it.rarity == rarityFilter) }
+        val lastNew = runCatching { org.json.JSONArray(Prefs.get(this).getString("last_scan_new", "[]")) }.getOrNull()
+            ?.let { a -> (0 until a.length()).map(a::getString).toSet() }.orEmpty()
+        val shown = all.filter {
+            (query.isEmpty() || query in it.name.lowercase()) && (rarityFilter == null || it.rarity == rarityFilter) &&
+                when (showMode) { 1 -> it.name in lastNew; 2 -> it.uncertain; else -> true }
+        }.let { l ->
+            when (sortMode) {
+                1 -> l.sortedWith(compareBy<Owned> { "MRUC?".indexOf(it.rarity) }.thenBy { it.name })
+                2 -> l.sortedWith(compareByDescending<Owned> { it.copies }.thenBy { it.name })
+                3 -> l.sortedWith(compareByDescending<Owned> { it.added }.thenBy { it.name })
+                else -> l
+            }
+        }
+        emptyCard.visibility = if (all.isEmpty()) View.VISIBLE else View.GONE
+        if (shown.isEmpty() && all.isNotEmpty()) listBox.addView(mutedText(when (showMode) {
+            1 -> "The last scan didn't add new cards."
+            2 -> "Nothing to check: every count was read more than once or set by you."
+            else -> "No cards match."
+        }).apply { setPadding(0, dp(8), 0, 0) })
         // Rows are plain views; cap them so a big collection stays quick (search narrows the rest).
         listBox.removeAllViews()
         for (o in shown.take(MAX_ROWS)) listBox.addView(cardRow(o))
         if (shown.size > MAX_ROWS) listBox.addView(mutedText("Showing $MAX_ROWS of ${shown.size}. Search to find the rest.").apply { setPadding(0, dp(8), 0, 0) })
         val by = all.groupingBy { it.rarity }.eachCount()
         summary.text = if (all.isEmpty()) "No cards yet. Tap Start scanning, then open Collection in MTG Arena." else
-            "${all.size} cards · ${all.sumOf { it.copies }} copies\n" +
-            "Mythic ${by["M"] ?: 0} · Rare ${by["R"] ?: 0} · Uncommon ${by["U"] ?: 0} · Common ${by["C"] ?: 0}"
+            "${all.size} cards · ${all.sumOf { it.copies }} copies · ${all.count { it.copies == 4 }} playsets\n" +
+            "Mythic ${by["M"] ?: 0} · Rare ${by["R"] ?: 0} · Uncommon ${by["U"] ?: 0} · Common ${by["C"] ?: 0}" +
+            all.count { it.uncertain }.let { if (it > 0) "\n$it counts read only once: see \"Worth checking\"" else "" }
     }
 
     private var downloading = false
@@ -377,6 +422,10 @@ class MainActivity : Activity() {
         var dialog: AlertDialog? = null
         val body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0)
+            val rn = mapOf("M" to "Mythic", "R" to "Rare", "U" to "Uncommon", "C" to "Common")[o.rarity] ?: "Unknown rarity"
+            val when_ = if (o.added > 0) " · added " + java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(o.added)) else ""
+            val src = when { o.manual -> " · count set by you"; o.reads > 0 -> " · count read ${o.reads}×"; else -> "" }
+            addView(TextView(context).apply { text = rn + when_ + src; textSize = 13f; setTextColor(muted()); setPadding(0, 0, 0, pad / 3) })
             addView(TextView(context).apply { text = rules ?: "No rules text yet. Update the card list."; textSize = 14f })
             addView(TextView(context).apply { text = "You own ${o.copies}. Set copies:"; setPadding(0, pad / 2, 0, 0); setTypeface(typeface, Typeface.BOLD) })
             addView(LinearLayout(context).apply {

@@ -52,6 +52,12 @@ fun Context.pill(label: String, fill: Int, textColor: Int, onClick: () -> Unit) 
     setOnClickListener { onClick() }
 }
 
+/** Re-colours a [pill] button (e.g. Start → red Stop). */
+fun Context.repaint(b: android.widget.Button, fill: Int) {
+    b.background = android.graphics.drawable.RippleDrawable(
+        android.content.res.ColorStateList.valueOf(Color.argb(60, 255, 255, 255)), rounded(fill, 24), null)
+}
+
 fun Context.primaryButton(label: String, color: String = PRIMARY, onClick: () -> Unit) = pill(label, Color.parseColor(color), Color.WHITE, onClick)
 fun Context.tonalButton(label: String, onClick: () -> Unit) = pill(label, surface2(), onSurface(), onClick)
 
