@@ -330,8 +330,13 @@ class MainActivity : Activity() {
 
     private fun confirmClear() {
         AlertDialog.Builder(this)
-            .setMessage("Remove every card from the scanned collection? This can't be undone.")
-            .setPositiveButton("Clear") { _, _ -> CollectionStore.clear(this); refresh() }
+            .setMessage("Remove every card from the scanned collection?")
+            .setPositiveButton("Clear") { _, _ ->
+                CollectionStore.clear(this); refresh()
+                AlertDialog.Builder(this).setMessage("Collection cleared.")
+                    .setPositiveButton("Undo") { _, _ -> CollectionStore.undoClear(this); refresh() }
+                    .setNegativeButton("OK", null).show()
+            }
             .setNegativeButton("Cancel", null)
             .show()
     }

@@ -91,6 +91,7 @@ class ScanService : Service() {
      */
     private val votes = HashMap<String, IntArray>()
     private var found = 0
+    private var updatedTotal = 0
 
     // --- auto-scroll (scan mode): swipe, let at least one scan read the new position, swipe again ---
     private var scrollOn = false
@@ -233,7 +234,11 @@ class ScanService : Service() {
         beforeSwipe?.let { stuck = if (Settle.diff(it, fp) < 2.0) stuck + 1 else 0 }
         if (stuck >= 2) {
             scrollOn = false
-            main.post { flash("Done", hold = 4000); paused = true; overlay?.let { style(it) } }
+            main.post {
+                flash("Done", hold = 4000); paused = true; overlay?.let { style(it) }
+                showPanel("Scan finished: $found new cards, $updatedTotal counts updated.\n" +
+                    "Change Arena's filter and tap the button to scan more, or long-press it to stop.")
+            }
             return
         }
         val svc = AutoScroll.instance ?: run { scrollOn = false; return }
@@ -296,6 +301,7 @@ class ScanService : Service() {
                     }
                     val added = CollectionStore.recordScan(this, counts)
                     found += added
+                    updatedTotal += CollectionStore.lastUpdated
                     saveDebug(bmp, result)
                     main.post {
                         if (added > 0) flash("+$added")
@@ -725,6 +731,8 @@ class ScanService : Service() {
     }
 
     override fun onDestroy() {
+        if (!coachMode && running) android.widget.Toast.makeText(this,
+            "Scan finished: $found new cards, $updatedTotal counts updated.", android.widget.Toast.LENGTH_LONG).show()
         running = false
         coaching = false
         overlay?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }

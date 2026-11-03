@@ -27,9 +27,14 @@ object CollectionStore {
      * you set it by hand.
      * Returns how many cards were new.
      */
+    /** Counts of the last [recordScan]: new cards and changed counts. */
+    @Volatile var lastUpdated = 0
+        private set
+
     @Synchronized fun recordScan(ctx: Context, seen: List<Pair<Card, Int?>>): Int {
         load(ctx)
         var added = 0
+        var updated = 0
         var changed = false
         for ((c, n) in seen) {
             if (n == 0) continue // every diamond empty: not owned
@@ -40,10 +45,11 @@ object CollectionStore {
                 if (n == null) continue
                 cards[c.name] = Owned(c.name, c.rarity, n.coerceIn(1, 4)); added++; changed = true
             } else if (n != null && !ex.manual && ex.copies != n) {
-                ex.copies = n.coerceIn(1, 4); changed = true
+                ex.copies = n.coerceIn(1, 4); changed = true; updated++
             }
         }
         if (changed) save(ctx)
+        lastUpdated = updated
         return added
     }
 
@@ -54,7 +60,22 @@ object CollectionStore {
         save(ctx)
     }
 
-    @Synchronized fun clear(ctx: Context) { cards.clear(); loaded = true; save(ctx) }
+    /** Clears everything, keeping one backup so it can be undone. */
+    @Synchronized fun clear(ctx: Context) {
+        load(ctx)
+        file(ctx).takeIf { it.exists() }?.copyTo(backup(ctx), overwrite = true)
+        cards.clear(); save(ctx)
+    }
+
+    @Synchronized fun undoClear(ctx: Context): Boolean {
+        val b = backup(ctx)
+        if (!b.exists()) return false
+        b.copyTo(file(ctx), overwrite = true)
+        cards.clear(); loaded = false; load(ctx)
+        return true
+    }
+
+    private fun backup(ctx: Context) = File(ctx.filesDir, "collection_backup.json")
 
     /** Spreadsheet-ready CSV: Count, Name, Rarity, Set by hand. Names with commas are quoted. */
     @Synchronized fun exportCsv(ctx: Context): String {
