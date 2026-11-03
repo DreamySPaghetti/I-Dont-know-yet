@@ -528,7 +528,7 @@ class ScanService : Service() {
             setOnClickListener { panelBox?.visibility = android.view.View.GONE }
         }.also { tv ->
             fun btn(label: String, onClick: () -> Unit) = android.widget.Button(this).apply {
-                text = label; textSize = 13f; isAllCaps = false; setOnClickListener { onClick() }
+                this.text = label; textSize = 13f; isAllCaps = false; setOnClickListener { onClick() }
             }
             val row = android.widget.LinearLayout(this).apply {
                 visibility = android.view.View.GONE
