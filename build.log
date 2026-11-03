@@ -1,0 +1,99 @@
+Starting a Gradle Daemon (subsequent builds will be faster)
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:checkDebugAarMetadata
+> Task :app:generateDebugResValues
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources
+> Task :app:packageDebugResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:parseDebugLocalResources
+> Task :app:mergeDebugResources
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:processDebugManifestForPackage
+> Task :app:javaPreCompileDebug
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :arenascanner:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :arenascanner:preBuild UP-TO-DATE
+> Task :arenascanner:preDebugBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest
+> Task :arenascanner:checkDebugAarMetadata
+> Task :arenascanner:generateDebugResValues
+> Task :arenascanner:mapDebugSourceSetPaths
+> Task :arenascanner:generateDebugResources
+> Task :app:processDebugResources
+> Task :arenascanner:mergeDebugResources
+> Task :arenascanner:packageDebugResources
+> Task :arenascanner:createDebugCompatibleScreenManifests
+> Task :arenascanner:extractDeepLinksDebug
+> Task :arenascanner:parseDebugLocalResources
+> Task :arenascanner:processDebugMainManifest
+> Task :arenascanner:processDebugManifest
+> Task :arenascanner:processDebugManifestForPackage
+> Task :arenascanner:preDebugUnitTestBuild UP-TO-DATE
+> Task :arenascanner:javaPreCompileDebug
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :arenascanner:javaPreCompileDebugUnitTest
+> Task :app:mergeDebugShaders
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets
+> Task :app:desugarDebugFileDependencies
+> Task :app:compressDebugAssets
+> Task :app:mergeDebugJniLibFolders
+> Task :app:checkDebugDuplicateClasses
+> Task :arenascanner:processDebugResources
+> Task :app:mergeDebugNativeLibs
+> Task :app:mergeLibDexDebug
+> Task :app:mergeExtDexDebug
+> Task :app:validateSigningDebug
+> Task :app:writeDebugAppMetadata
+> Task :app:writeDebugSigningConfigVersions
+> Task :arenascanner:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :arenascanner:mergeDebugShaders
+> Task :arenascanner:compileDebugShaders NO-SOURCE
+> Task :arenascanner:generateDebugAssets UP-TO-DATE
+> Task :arenascanner:mergeDebugAssets
+
+> Task :app:stripDebugDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libmlkitcommonpipeline.so.
+
+> Task :arenascanner:desugarDebugFileDependencies
+> Task :arenascanner:compressDebugAssets
+> Task :arenascanner:checkDebugDuplicateClasses
+> Task :arenascanner:mergeDebugJniLibFolders
+> Task :arenascanner:mergeLibDexDebug
+> Task :arenascanner:mergeExtDexDebug
+> Task :arenascanner:validateSigningDebug
+> Task :arenascanner:writeDebugAppMetadata
+> Task :arenascanner:writeDebugSigningConfigVersions
+> Task :arenascanner:mergeDebugNativeLibs
+
+> Task :arenascanner:stripDebugDebugSymbols
+Unable to strip the following libraries, packaging them as they are: liblitertlm_jni.so, libmlkit_google_ocr_pipeline.so.
+
+> Task :arenascanner:compileDebugKotlin FAILED
+e: file:///home/runner/work/I-Dont-know-yet/I-Dont-know-yet/arenascanner/src/main/java/com/arenascanner/app/CoachActivity.kt:437:25 'val' cannot be reassigned.
+e: file:///home/runner/work/I-Dont-know-yet/I-Dont-know-yet/arenascanner/src/main/java/com/arenascanner/app/CoachActivity.kt:437:32 Assignment type mismatch: actual type is 'kotlin.String', but 'com.google.mlkit.vision.text.Text!' was expected.
+
+> Task :app:compileDebugKotlin
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run-1793740902114.json
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':arenascanner:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 35s
+58 actionable tasks: 58 executed
