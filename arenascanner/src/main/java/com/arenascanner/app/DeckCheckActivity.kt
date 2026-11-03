@@ -16,6 +16,54 @@ import android.widget.TextView
 class DeckCheckActivity : Activity() {
     private lateinit var input: EditText
     private lateinit var out: LinearLayout
+    private lateinit var decksSpinner: android.widget.Spinner
+    private var deckNames = listOf<String>()
+    private var ignoreSelection = true
+
+    private fun decks(): org.json.JSONObject =
+        runCatching { org.json.JSONObject(getSharedPreferences("coach", MODE_PRIVATE).getString("decks", "{}")!!) }.getOrDefault(org.json.JSONObject())
+
+    private fun loadDeckList(select: String? = null) {
+        val d = decks()
+        deckNames = d.keys().asSequence().toList().sorted()
+        ignoreSelection = true
+        decksSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
+            listOf(if (deckNames.isEmpty()) "No saved decks" else "Saved decks…") + deckNames)
+        decksSpinner.setSelection(select?.let { deckNames.indexOf(it) + 1 }?.takeIf { it > 0 } ?: 0)
+        decksSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                if (ignoreSelection) { ignoreSelection = false; return }
+                if (pos > 0) { input.setText(decks().optString(deckNames[pos - 1])); run() }
+            }
+            override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+        }
+    }
+
+    private fun saveDeck() {
+        if (input.text.isBlank()) { toast("Paste a deck first."); return }
+        val nameBox = EditText(this).apply { hint = "Deck name"; isSingleLine = true
+            setText(if (decksSpinner.selectedItemPosition > 0) deckNames[decksSpinner.selectedItemPosition - 1] else "") }
+        android.app.AlertDialog.Builder(this).setTitle("Save deck").setView(nameBox)
+            .setPositiveButton("Save") { _, _ ->
+                val n = nameBox.text.toString().trim().ifEmpty { "Deck ${deckNames.size + 1}" }
+                getSharedPreferences("coach", MODE_PRIVATE).edit().putString("decks", decks().put(n, input.text.toString()).toString()).apply()
+                loadDeckList(n); toast("Saved \"$n\"")
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun deleteDeck() {
+        val pos = decksSpinner.selectedItemPosition
+        if (pos <= 0) { toast("Pick a saved deck to delete."); return }
+        val n = deckNames[pos - 1]
+        android.app.AlertDialog.Builder(this).setMessage("Delete \"$n\"?")
+            .setPositiveButton("Delete") { _, _ ->
+                val d = decks(); d.remove(n)
+                getSharedPreferences("coach", MODE_PRIVATE).edit().putString("decks", d.toString()).apply()
+                loadDeckList()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun toast(s: String) = android.widget.Toast.makeText(this, s, android.widget.Toast.LENGTH_SHORT).show()
     private val dp get() = resources.displayMetrics.density
     private val rarityName = mapOf("M" to "Mythic", "R" to "Rare", "U" to "Uncommon", "C" to "Common", "?" to "Unknown")
 
@@ -32,6 +80,13 @@ class DeckCheckActivity : Activity() {
             text = "In Arena open a deck, tap Export, then Paste here. Shows what you own and the wildcards needed."
             setTextColor(context.secondaryText()); setPadding(0, pad / 2, 0, pad / 2)
         })
+        // Saved decks: pick one to load it, or save the pasted list under a name.
+        decksSpinner = android.widget.Spinner(this).apply { id = 4245 }
+        col.addView(LinearLayout(this).apply {
+            addView(decksSpinner, LinearLayout.LayoutParams(0, -2, 2f))
+            addView(Button(context).apply { text = "Save"; setOnClickListener { saveDeck() } }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(Button(context).apply { text = "Delete"; setOnClickListener { deleteDeck() } }, LinearLayout.LayoutParams(0, -2, 1f))
+        })
         input = EditText(this).apply {
             id = 4242; hint = "4 Llanowar Elves (FDN) 227\n…"; minLines = 5; maxLines = 10; textSize = 13f; typeface = Typeface.MONOSPACE
             setText(getSharedPreferences("coach", MODE_PRIVATE).getString("last_deck", ""))
@@ -44,6 +99,7 @@ class DeckCheckActivity : Activity() {
         out = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, pad, 0, 0) }
         col.addView(out)
         setContentView(scroll)
+        loadDeckList()
         if (input.text.isNotBlank()) run()
     }
 
