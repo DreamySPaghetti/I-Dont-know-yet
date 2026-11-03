@@ -133,8 +133,24 @@ class CoachPromptTest {
     @Test fun blockMathFromTheBlockingScreenshot() {
         val b = CoachPrompt.analyze(blockScreen, match)
         val f = CoachPrompt.combatFacts(b)!!
-        assertTrue(f, f.contains("If their 2/2 attacks: your 5/3 kills it and survives; your 2/1 trades with it"))
-        assertTrue(f, f.contains("If their 1/1 attacks: your 5/3 kills it and survives; your 2/1 trades with it"))
+        // Shrine Keeper's name sits above its 2/2 box, so it's linked; the 1/1's name wasn't read.
+        assertTrue(f, f.contains("If their Shrine Keeper 2/2 attacks: your Veteran Survivor 5/3 kills it and survives; your 2/1 trades with it"))
+        assertTrue(f, f.contains("If their 1/1 attacks: your Veteran Survivor 5/3 kills it and survives; your 2/1 trades with it"))
+    }
+
+    @Test fun abilitiesChangeTheMath() {
+        val sailor = CoachPrompt.Fighter("Spectral Sailor 1/1", 1, 1, setOf("flying"))
+        val wall = CoachPrompt.Fighter("Wall 0/5", 0, 5)
+        val ninja = CoachPrompt.Fighter("Ninja 2/2", 2, 2, setOf("deathtouch"))
+        val knight = CoachPrompt.Fighter("Knight 2/2", 2, 2, setOf("first strike"))
+        val bear = CoachPrompt.Fighter("Bear 2/2", 2, 2)
+        assertEquals(false to true, CoachPrompt.fight(knight, bear))   // first strike kills before it's hit
+        assertEquals(false to true, CoachPrompt.fight(ninja, wall))    // deathtouch kills the 0/5 wall; the wall deals 0
+        val block = CoachPrompt.Board(emptyList(), emptyMap(), emptyMap(), null, null, CoachPrompt.Phase.BLOCK, emptyList(),
+            fighters = mapOf(Zone.THEIRS to listOf(sailor), Zone.MINE to listOf(wall, bear)))
+        assertTrue(CoachPrompt.combatFacts(block)!!.contains("If their Spectral Sailor 1/1 (flying) attacks: none of your creatures can block it"))
+        val attack = block.copy(phase = CoachPrompt.Phase.ATTACK, fighters = mapOf(Zone.MINE to listOf(bear), Zone.THEIRS to listOf(ninja)))
+        assertTrue(CoachPrompt.combatFacts(attack)!!.contains("Your Bear 2/2 attacking: dies if blocked by their Ninja 2/2; kills a blocking Ninja 2/2"))
     }
 
     @Test fun attackMath() {

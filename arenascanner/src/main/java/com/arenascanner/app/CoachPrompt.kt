@@ -94,6 +94,8 @@ object CoachPrompt {
         /** Names of hand cards Arena highlights as playable now; null when it couldn't be measured. */
         val playable: Set<String>? = null,
         val notPlayable: Set<String> = emptySet(),
+        /** Battlefield creatures with names and abilities, when P/T boxes could be linked to names. */
+        val fighters: Map<Zone, List<Fighter>> = emptyMap(),
     )
 
     enum class Phase(val note: String, val question: String) {
@@ -162,6 +164,8 @@ object CoachPrompt {
         val playable = mutableSetOf<String>()
         val notPlayable = mutableSetOf<String>()
         var measured = false
+        val ptSeen = mutableListOf<Pair<Seen, Zone>>()
+        val cardSeen = mutableListOf<Triple<Card, Seen, Zone>>()
         val handH = lines.filter { it.cy > 0.6f && (Matcher.normalize(it.text) in BASIC || match(it.text.trim()) != null) }
             .maxOfOrNull { it.h } ?: 0f
         // Arena shows "x4" on a stack of identical lands.
@@ -184,17 +188,33 @@ object CoachPrompt {
                     lands.getOrPut(zone) { linkedMapOf() }.merge(t.replaceFirstChar { it.uppercase() }, n, Int::plus)
                 }
                 STACK.matches(t) -> {}
-                PT.matches(t) && s.cy < 0.8f -> creatures.getOrPut(if (s.cy < 0.44f) Zone.THEIRS else Zone.MINE) { mutableListOf() }.add(t)
+                PT.matches(t) && s.cy < 0.8f -> {
+                    val z = if (s.cy < 0.44f) Zone.THEIRS else Zone.MINE
+                    creatures.getOrPut(z) { mutableListOf() }.add(t)
+                    ptSeen += s to z
+                }
                 LIFE.matches(t) && kotlin.math.abs(s.cx - 0.5f) < 0.07f && (s.cy < 0.15f || s.cy > 0.82f) ->
                     if (s.cy < 0.15f) lifeOpp = t.toInt() else lifeYou = t.toInt()
                 else -> {
                     val c = if ("basic land" in norm) null else match(t)
-                    if (c != null) cards += c to zone else other += t
+                    if (c != null) { cards += c to zone; if (zone == Zone.MINE || zone == Zone.THEIRS) cardSeen += Triple(c, s, zone) } else other += t
                 }
             }
         }
+        // Link each P/T box to the card name drawn above it on the same small battlefield card.
+        val used = mutableSetOf<Int>()
+        val fighters = linkedMapOf<Zone, MutableList<Fighter>>()
+        for ((p, z) in ptSeen) {
+            val (pw, tg) = pt(p.text.trim()) ?: continue
+            val best = cardSeen.withIndex()
+                .filter { (i, c) -> i !in used && c.third == z && p.cy - c.second.cy in 0.03f..0.2f && kotlin.math.abs(p.cx - c.second.cx) < 0.07f }
+                .minByOrNull { (_, c) -> kotlin.math.abs(p.cx - c.second.cx) + (p.cy - c.second.cy) }
+            val f = if (best == null) Fighter(p.text.trim(), pw, tg)
+                else { used += best.index; Fighter("${best.value.first.name} ${p.text.trim()}", pw, tg, combatKeywords(best.value.first)) }
+            fighters.getOrPut(z) { mutableListOf() }.add(f)
+        }
         return Board(cards, lands, creatures, lifeYou, lifeOpp, phase, other,
-            if (measured) playable else null, notPlayable - playable)
+            if (measured) playable else null, notPlayable - playable, fighters)
     }
 
     /**
@@ -239,31 +259,71 @@ object CoachPrompt {
 
     private fun pt(s: String): Pair<Int, Int>? = Regex("^(\\d+)/(\\d+)$").find(s)?.let { it.groupValues[1].toInt() to it.groupValues[2].toInt() }
 
-    /** Combat math from the power/toughness on screen (ignores abilities like deathtouch or first strike). */
+    /** A creature on the battlefield for combat math: its power/toughness box, linked to its name when found. */
+    data class Fighter(val label: String, val p: Int, val t: Int, val kw: Set<String> = emptySet())
+
+    private val COMBAT_KW = listOf("flying", "reach", "deathtouch", "first strike", "double strike", "menace", "indestructible", "trample", "defender")
+
+    fun combatKeywords(c: Card): Set<String> {
+        val r = c.rules.lowercase()
+        return COMBAT_KW.filter { Regex("\\b" + Regex.escape(it) + "\\b").containsMatchIn(r) }.toSet()
+    }
+
+    private fun canBlock(blk: Fighter, att: Fighter) =
+        "flying" !in att.kw || "flying" in blk.kw || "reach" in blk.kw
+
+    private fun deals(x: Fighter, y: Fighter) = x.p > 0 && "indestructible" !in y.kw && (x.p >= y.t || "deathtouch" in x.kw)
+
+    /** (attacker dies, blocker dies) for a one-on-one block, with first strike handled. */
+    fun fight(a: Fighter, b: Fighter): Pair<Boolean, Boolean> {
+        val aFirst = "first strike" in a.kw || "double strike" in a.kw
+        val bFirst = "first strike" in b.kw || "double strike" in b.kw
+        return when {
+            aFirst && !bFirst -> { val bDies = deals(a, b); (if (bDies) false else deals(b, a)) to bDies }
+            bFirst && !aFirst -> { val aDies = deals(b, a); aDies to (if (aDies) false else deals(a, b)) }
+            else -> deals(b, a) to deals(a, b)
+        }
+    }
+
+    private fun fighters(b: Board, z: Zone): List<Fighter> =
+        b.fighters[z]?.takeIf { it.isNotEmpty() }
+            ?: b.creatures[z].orEmpty().mapNotNull { s -> pt(s)?.let { Fighter(s, it.first, it.second) } }
+
+    /** Combat math from power/toughness plus key abilities (flying, deathtouch, first strike, ...). */
     fun combatFacts(b: Board): String? {
-        val mine = b.creatures[Zone.MINE].orEmpty().mapNotNull { s -> pt(s)?.let { s to it } }
-        val theirs = b.creatures[Zone.THEIRS].orEmpty().mapNotNull { s -> pt(s)?.let { s to it } }
+        val mine = fighters(b, Zone.MINE).distinctBy { it.label }
+        val theirs = fighters(b, Zone.THEIRS).distinctBy { it.label }
         if (mine.isEmpty() || theirs.isEmpty()) return null
-        val sb = StringBuilder("Combat math (power/toughness only, ignoring abilities):\n")
+        fun name(f: Fighter) = f.label + if (f.kw.isEmpty()) "" else " (" + f.kw.joinToString(", ") + ")"
+        val sb = StringBuilder("Combat math (power/toughness and key abilities; other abilities ignored):\n")
         when (b.phase) {
-            Phase.BLOCK -> for ((tl, t) in theirs.distinctBy { it.first }) {
-                val outs = mine.distinctBy { it.first }.mapNotNull { (ml, m) ->
-                    val kills = m.first >= t.second; val dies = t.first >= m.second
+            Phase.BLOCK -> for (att in theirs) {
+                if (att.p == 0 && "defender" in att.kw) continue
+                val outs = mine.mapNotNull { blk ->
+                    if (!canBlock(blk, att)) return@mapNotNull null
+                    val (attDies, blkDies) = fight(att, blk)
                     when {
-                        kills && !dies -> "your $ml kills it and survives"
-                        kills && dies -> "your $ml trades with it"
-                        !dies -> "your $ml blocks it safely"
+                        attDies && !blkDies -> "your ${blk.label} kills it and survives"
+                        attDies && blkDies -> "your ${blk.label} trades with it"
+                        !blkDies -> "your ${blk.label} blocks it safely"
                         else -> null
                     }
                 }
-                sb.append("- If their $tl attacks: ").append(if (outs.isEmpty()) "every block loses your creature" else outs.joinToString("; ")).append('\n')
+                sb.append("- If their ${name(att)} attacks: ").append(when {
+                    "menace" in att.kw -> "it needs two blockers. " + (if (outs.isEmpty()) "" else "One-on-one: " + outs.joinToString("; "))
+                    mine.none { canBlock(it, att) } -> "none of your creatures can block it"
+                    outs.isEmpty() -> "every block loses your creature"
+                    else -> outs.joinToString("; ") + if ("trample" in att.kw) " (it has trample: extra damage still hits you)" else ""
+                }).append('\n')
             }
-            Phase.ATTACK, Phase.MAIN1 -> for ((ml, m) in mine.distinctBy { it.first }) {
-                if (m.first == 0) continue
-                val killers = theirs.filter { it.second.first >= m.second }.map { it.first }.distinct()
-                val victims = theirs.filter { m.first >= it.second.second }.map { it.first }.distinct()
-                sb.append("- Your $ml attacking: ")
-                    .append(if (killers.isEmpty()) "no blocker of theirs kills it" else "dies if blocked by their ${killers.joinToString("/")}")
+            Phase.ATTACK, Phase.MAIN1 -> for (att in mine) {
+                if (att.p == 0 || "defender" in att.kw) continue
+                val blockers = theirs.filter { canBlock(it, att) }
+                sb.append("- Your ${name(att)} attacking: ")
+                if (blockers.isEmpty()) { sb.append("nothing they have can block it\n"); continue }
+                val killers = blockers.filter { fight(att, it).first }.map { it.label }.distinct()
+                val victims = blockers.filter { fight(att, it).second }.map { it.label }.distinct()
+                sb.append(if (killers.isEmpty()) "no blocker of theirs kills it" else "dies if blocked by their ${killers.joinToString("/")}")
                     .append(if (victims.isEmpty()) "" else "; kills a blocking ${victims.joinToString("/")}").append('\n')
             }
             else -> return null
