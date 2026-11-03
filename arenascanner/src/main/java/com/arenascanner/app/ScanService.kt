@@ -142,7 +142,9 @@ class ScanService : Service() {
             else @Suppress("DEPRECATION") intent?.getParcelableExtra(EXTRA_DATA)
         if (data == null) { stopSelf(); return START_NOT_STICKY }
         startCapture(code, data)
-        registerReceiver(screenReceiver, android.content.IntentFilter().apply { addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_SCREEN_ON) })
+        val screenFilter = android.content.IntentFilter().apply { addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_SCREEN_ON) }
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(screenReceiver, screenFilter, RECEIVER_NOT_EXPORTED)
+        else registerReceiver(screenReceiver, screenFilter)
         showOverlay()
         running = true
         if (coachMode) startCoach() else {
