@@ -36,6 +36,7 @@ class CoachActivity : Activity() {
     private lateinit var startBtn: Button
     private lateinit var step1: TextView
     private lateinit var lessonsStatus: TextView
+    private lateinit var logStatus: TextView
     private lateinit var step2: TextView
     private lateinit var step3: TextView
     private var copying = false
@@ -88,6 +89,18 @@ class CoachActivity : Activity() {
             minHeight = (56 * dp).toInt(); setOnClickListener { toggleCoach() }
         }
         col.addView(startBtn)
+        col.addView(label("Match log", 16f, true))
+        logStatus = label("")
+        col.addView(logStatus)
+        col.addView(LinearLayout(this).apply {
+            addView(Button(context).apply { text = "Save log as zip"; setOnClickListener { exportLog() } },
+                LinearLayout.LayoutParams(0, -2, 1f))
+            addView(Button(context).apply { text = "Clear log"; setOnClickListener {
+                android.app.AlertDialog.Builder(this@CoachActivity).setMessage("Delete the saved screenshots and answers?")
+                    .setPositiveButton("Delete") { _, _ -> CoachLog.clear(this@CoachActivity); refresh() }
+                    .setNegativeButton("Cancel", null).show()
+            } }, LinearLayout.LayoutParams(0, -2, 1f))
+        })
         col.addView(label("Lessons", 16f, true))
         lessonsStatus = label("")
         col.addView(lessonsStatus)
@@ -153,6 +166,9 @@ class CoachActivity : Activity() {
         rulesBtn.text = if (hasRules) "Refresh rules text (after a new set)" else "Get card rules text"
         startBtn.isEnabled = ready && CardDb.isReady(this)
         startBtn.alpha = if (startBtn.isEnabled) 1f else 0.5f
+        val n = CoachLog.count(this)
+        logStatus.text = if (n == 0) "Every coach answer is saved here with a screenshot of the board."
+            else "$n answers saved with screenshots. After the match, save the zip and send it to Claude."
         val ls = Lessons.all(this)
         lessonsStatus.text = if (ls.isEmpty()) "No lessons yet. Rate or fix the coach's answers while you play."
             else "${ls.size} lessons saved (${ls.count { !it.good }} fixes, ${ls.count { it.good }} confirmed)."
@@ -330,6 +346,22 @@ class CoachActivity : Activity() {
         val uri = contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: run { toast("Couldn't create the file."); return }
         contentResolver.openOutputStream(uri)?.use { Lessons.exportZip(this, it) }
         toast("Saved Downloads/ArenaScanner/$name")
+    }
+
+    /** Zip of every answer + screenshot (+ your 👍/✏️) in Downloads/ArenaScanner, then the share sheet. */
+    private fun exportLog() {
+        if (CoachLog.count(this) == 0) { toast("Nothing saved yet. Use the coach during a match first."); return }
+        val name = "coach_match_${java.text.SimpleDateFormat("yyyy-MM-dd_HHmm", java.util.Locale.US).format(java.util.Date())}.zip"
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
+            put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/zip")
+            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/ArenaScanner")
+        }
+        val uri = contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: run { toast("Couldn't create the file."); return }
+        contentResolver.openOutputStream(uri)?.use { CoachLog.exportZip(this, it) }
+        toast("Saved Downloads/ArenaScanner/$name")
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("application/zip")
+            .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Send match log"))
     }
 
     private fun confirmClearLessons() {

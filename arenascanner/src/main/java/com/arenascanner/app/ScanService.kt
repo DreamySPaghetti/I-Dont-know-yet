@@ -106,6 +106,8 @@ class ScanService : Service() {
     private var lastPrompt = ""
     private var lastBoard: CoachPrompt.Board? = null
     private var lastAnswer = ""
+    private var lastFull: ByteArray? = null
+    private var lastTime = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -449,6 +451,7 @@ class ScanService : Service() {
                 val prompt = CoachPrompt.build(board, lessons = learned)
                 val image = jpeg(bmp, 1024)
                 lastImage = image; lastPrompt = prompt; lastBoard = board; lastAnswer = ""
+                lastFull = jpeg(bmp, 1600); lastTime = System.currentTimeMillis()
                 showPanel("Thinking… (${cards.distinctBy { it.first.name }.size} cards read)")
                 coachExec.execute { askGemma(image, prompt) }
             }
@@ -463,8 +466,14 @@ class ScanService : Service() {
             onDone = {
                 val secs = (System.currentTimeMillis() - started) / 1000
                 val used = Regex("Lessons from my past games").containsMatchIn(prompt)
+                val b = lastBoard
+                runCatching {
+                    CoachLog.add(this, lastTime, lastFull, org.json.JSONObject()
+                        .put("phase", b?.phase?.name).put("seconds", secs).put("backend", gemma?.backendName)
+                        .put("board", b?.let { CoachPrompt.summary(it) }).put("prompt", prompt).put("answer", lastAnswer))
+                }
                 main.post {
-                    panel?.let { it.text = styled("$lastAnswer\n\n(${secs}s${if (used) " · used your past lessons" else ""})") }
+                    panel?.let { it.text = styled("$lastAnswer\n\n(${secs}s${if (used) " · used your past lessons" else ""} · saved to match log)") }
                     actions?.visibility = android.view.View.VISIBLE
                     coachBusy = false
                 }
@@ -501,6 +510,7 @@ class ScanService : Service() {
         val l = Lesson(System.currentTimeMillis(), b.phase.name, b.cards.map { it.first.name }.distinct(),
             CoachPrompt.summary(b), lastAnswer, correct, good)
         Lessons.add(this, l, lastImage, lastPrompt)
+        runCatching { CoachLog.feedback(this, lastTime, good, correct) }
         actions?.visibility = android.view.View.GONE
         showPanel(if (good) "Saved: the coach will repeat this in similar spots." else "Saved your play. The coach will use it in similar spots.")
     }
