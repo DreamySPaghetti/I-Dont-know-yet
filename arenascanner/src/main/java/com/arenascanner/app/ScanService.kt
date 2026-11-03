@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -24,6 +25,8 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
+import android.util.DisplayMetrics
+import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ViewConfiguration
@@ -67,6 +70,7 @@ class ScanService : Service() {
     private var width = 0
     private var height = 0
     // stableTicks = 0: don't wait for scrolling to stop, just skip frames that look like the last scan.
+    private var ticks = 0
     private val settle = Settle(stableTicks = 0, newDiff = 4.0)
     /** Highest count read for each card during this session; a pip hidden for a frame won't lower it. */
     private val sessionMax = HashMap<String, Int>()
@@ -101,22 +105,60 @@ class ScanService : Service() {
         p.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() { main.post { stopSelf() } }
         }, main)
-        val bounds = getSystemService(WindowManager::class.java).currentWindowMetrics.bounds
-        width = bounds.width(); height = bounds.height()
-        val r = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
+        val (w, h) = realSize()
+        width = w; height = h
+        val r = newReader(w, h)
+        reader = r
+        display = p.createVirtualDisplay("ArenaScanner", w, h, resources.displayMetrics.densityDpi,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, r.surface, null, null)
+    }
+
+    /** The screen's current size in pixels, as it is rotated now (Arena runs in landscape). */
+    private fun realSize(): Pair<Int, Int> {
+        val d = getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY)
+        val m = DisplayMetrics()
+        @Suppress("DEPRECATION") d.getRealMetrics(m)
+        return m.widthPixels to m.heightPixels
+    }
+
+    private fun newReader(w: Int, h: Int): ImageReader {
+        val r = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 3)
         r.setOnImageAvailableListener({ rd ->
+            if (rd !== reader) return@setOnImageAvailableListener
             val img = rd.acquireLatestImage() ?: return@setOnImageAvailableListener
             latest?.close()
             latest = img
         }, bg)
+        return r
+    }
+
+    /**
+     * Runs on the bg thread. When the phone turns (the app starts in portrait, Arena is landscape),
+     * resize the capture to match; otherwise Arena's picture is squeezed and the text is too small to read.
+     */
+    private fun matchRotation() {
+        val (w, h) = realSize()
+        if (w == width && h == height) return
+        val vd = display ?: return
+        width = w; height = h
+        val old = reader
+        val r = newReader(w, h)
         reader = r
-        display = p.createVirtualDisplay("ArenaScanner", width, height, resources.displayMetrics.densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, r.surface, null, null)
+        latest?.close(); latest = null
+        vd.resize(w, h, resources.displayMetrics.densityDpi)
+        vd.surface = r.surface
+        old?.close()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (::bg.isInitialized) bg.post(::matchRotation)
     }
 
     /** Runs on the bg thread every [TICK_MS]: whenever no scan is running, scan the frame if it's new. */
     private fun tick() {
         if (!running) return
+        if (++ticks % 8 == 0) matchRotation() // backup in case a rotation callback was missed
         val img = latest
         if (img != null && !paused && !busy) {
             val fp = fingerprint(img)
@@ -164,10 +206,12 @@ class ScanService : Service() {
                         hits.add(c to Box(b.left, b.top, b.right, b.bottom))
                     }
                     val result = countPips(bmp, hits)
-                    val counts = result.map { (card, _, n) ->
+                    val counts = result.map { (card, _, read) ->
+                        val n = read.count
                         val best = maxOf(n ?: 0, sessionMax[card.name] ?: 0)
                         if (best > 0) sessionMax[card.name] = best
-                        card to (if (best > 0) best else null)
+                        // 0 = all four diamonds empty: you don't own it, so it isn't added.
+                        card to (if (best > 0) best else n)
                     }
                     val added = CollectionStore.recordScan(this, counts)
                     found += added
@@ -181,8 +225,8 @@ class ScanService : Service() {
             .addOnFailureListener { main.post { flash("Error"); busy = false } }
     }
 
-    /** For each card name found, the copies read from its pips (null if unreadable). */
-    private fun countPips(bmp: Bitmap, hits: List<Pair<Card, Box>>): List<Triple<Card, Box, Int?>> {
+    /** For each card name found, the copies read from the diamonds above it (null if unreadable). */
+    private fun countPips(bmp: Bitmap, hits: List<Pair<Card, Box>>): List<Triple<Card, Box, PipRead>> {
         if (hits.isEmpty()) return emptyList()
         val w = bmp.width; val h = bmp.height
         val px = IntArray(w * h)
@@ -191,31 +235,32 @@ class ScanService : Service() {
             val p = px[y * w + x]
             (((p shr 16) and 0xFF) * 3 + ((p shr 8) and 0xFF) * 6 + (p and 0xFF)) / 10
         }
-        val cardW = Layout.cardWidth(hits.map { it.second }, w)
-        val seen = LinkedHashMap<String, Triple<Card, Box, Int?>>()
+        val cardW = Layout.cardWidth(hits.map { it.second }, w, h)
+        val seen = LinkedHashMap<String, Triple<Card, Box, PipRead>>()
         for ((card, box) in hits) {
-            val n = PipCounter.count(luma, Layout.pipRegion(box, cardW, w, h), cardW)
+            val read = PipCounter.count(luma, w, h, box, cardW)
             val prev = seen[card.name]
-            if (prev == null || (prev.third == null && n != null)) seen[card.name] = Triple(card, box, n)
+            if (prev == null || (prev.third.count == null && read.count != null)) seen[card.name] = Triple(card, box, read)
         }
         return seen.values.toList()
     }
 
     /** Saves the last scanned screen with what was read drawn on it, for "Save last scan image". */
-    private fun saveDebug(bmp: Bitmap, result: List<Triple<Card, Box, Int?>>) {
+    private fun saveDebug(bmp: Bitmap, result: List<Triple<Card, Box, PipRead>>) {
         val copy = bmp.copy(Bitmap.Config.ARGB_8888, true)
-        val cardW = Layout.cardWidth(result.map { it.second }, copy.width)
+        val cardW = Layout.cardWidth(result.map { it.second }, copy.width, copy.height)
+        val r = (Layout.PIP_RADIUS * cardW).toFloat()
         debugWriter.execute {
             val cv = Canvas(copy)
-            val stroke = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 4f }
-            val label = Paint().apply { textSize = 40f; isFakeBoldText = true; color = Color.YELLOW; setShadowLayer(4f, 0f, 0f, Color.BLACK) }
-            for ((_, box, n) in result) {
+            val stroke = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 3f }
+            val label = Paint().apply { textSize = 34f; isFakeBoldText = true; color = Color.YELLOW; setShadowLayer(4f, 0f, 0f, Color.BLACK) }
+            for ((_, box, read) in result) {
                 stroke.color = Color.RED
                 cv.drawRect(box.left.toFloat(), box.top.toFloat(), box.right.toFloat(), box.bottom.toFloat(), stroke)
-                val r = Layout.pipRegion(box, cardW, copy.width, copy.height)
-                stroke.color = if (n == null) Color.MAGENTA else Color.CYAN
-                cv.drawRect(r.left.toFloat(), r.top.toFloat(), r.right.toFloat(), r.bottom.toFloat(), stroke)
-                cv.drawText(n?.toString() ?: "?", r.left.toFloat(), r.bottom + 40f, label)
+                stroke.color = if (read.count == null) Color.MAGENTA else Color.CYAN
+                for ((x, y) in read.slots) cv.drawRect(x - r, y - r, x + r, y + r, stroke)
+                val (x0, y0) = read.slots.first()
+                cv.drawText(read.count?.toString() ?: "?", x0 - r, y0 - r - 8f, label)
             }
             runCatching { debugFile(this).outputStream().use { copy.compress(Bitmap.CompressFormat.PNG, 100, it) } }
             copy.recycle()

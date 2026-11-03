@@ -22,7 +22,7 @@ object CollectionStore {
     }
 
     /**
-     * Records cards seen in a scan, each with the copies read from its pips (null = couldn't tell).
+     * Records cards seen in a scan, each with the copies read from its diamonds (null = couldn't tell, 0 = not owned).
      * New cards get the read count, or 1. Known cards take a newly read count unless you set it by hand.
      * Returns how many cards were new.
      */
@@ -31,6 +31,7 @@ object CollectionStore {
         var added = 0
         var changed = false
         for ((c, n) in seen) {
+            if (n == 0) continue // every diamond empty: not owned
             val ex = cards[c.name]
             if (ex == null) {
                 cards[c.name] = Owned(c.name, c.rarity, (n ?: 1).coerceIn(1, 4)); added++; changed = true

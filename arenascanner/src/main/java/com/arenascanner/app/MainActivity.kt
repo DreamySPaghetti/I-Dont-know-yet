@@ -72,7 +72,7 @@ class MainActivity : Activity() {
             textSize = 13f
             setTextColor(Color.DKGRAY)
             text = "How to scan: tap Start scanning and allow screen capture. In Arena, open Collection and scroll at a steady, moderate pace. " +
-                "It scans continuously as you scroll, reading the cards and the copy pips under them (about 2–4 scans a second).\n\n" +
+                "It scans continuously as you scroll, reading each card's name and the 4 diamonds above it (filled = copies you own).\n\n" +
                 "Floating button: tap to pause or resume, long-press to stop, drag it to an empty spot so it doesn't cover cards. " +
                 "It shows +N when it finds new cards.\n\n" +
                 "If a count is wrong, fix it with − and +. Scans never change a count you set yourself."
