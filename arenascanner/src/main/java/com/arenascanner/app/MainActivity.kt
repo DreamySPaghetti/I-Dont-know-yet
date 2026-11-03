@@ -198,8 +198,9 @@ class MainActivity : Activity() {
                 updateButton.visibility = View.VISIBLE
             }
         }
-        // First launch: fetch the card list right away, since scanning needs it.
-        if (!CardDb.isReady(this)) downloadCards()
+        // First launch: fetch the card list right away, since scanning needs it. After 30 days,
+        // refresh it by itself so cards from new sets are recognised.
+        if (!CardDb.isReady(this) || CardDb.ageDays(this) >= 30) downloadCards()
     }
 
     private fun refresh() {
@@ -227,15 +228,15 @@ class MainActivity : Activity() {
             }
         }
         emptyCard.visibility = if (all.isEmpty()) View.VISIBLE else View.GONE
+        // Rows are plain views; cap them so a big collection stays quick (search narrows the rest).
+        listBox.removeAllViews()
+        for (o in shown.take(MAX_ROWS)) listBox.addView(cardRow(o))
+        if (shown.size > MAX_ROWS) listBox.addView(mutedText("Showing $MAX_ROWS of ${shown.size}. Search to find the rest.").apply { setPadding(0, dp(8), 0, 0) })
         if (shown.isEmpty() && all.isNotEmpty()) listBox.addView(mutedText(when (showMode) {
             1 -> "The last scan didn't add new cards."
             2 -> "Nothing to check: every count was read more than once or set by you."
             else -> "No cards match."
         }).apply { setPadding(0, dp(8), 0, 0) })
-        // Rows are plain views; cap them so a big collection stays quick (search narrows the rest).
-        listBox.removeAllViews()
-        for (o in shown.take(MAX_ROWS)) listBox.addView(cardRow(o))
-        if (shown.size > MAX_ROWS) listBox.addView(mutedText("Showing $MAX_ROWS of ${shown.size}. Search to find the rest.").apply { setPadding(0, dp(8), 0, 0) })
         val by = all.groupingBy { it.rarity }.eachCount()
         summary.text = if (all.isEmpty()) "No cards yet. Tap Start scanning, then open Collection in MTG Arena." else
             "${all.size} cards · ${all.sumOf { it.copies }} copies · ${all.count { it.copies == 4 }} playsets\n" +

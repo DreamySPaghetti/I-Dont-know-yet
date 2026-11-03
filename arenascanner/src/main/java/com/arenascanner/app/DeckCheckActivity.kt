@@ -27,8 +27,15 @@ class DeckCheckActivity : Activity() {
         val d = decks()
         deckNames = d.keys().asSequence().toList().sorted()
         ignoreSelection = true
+        // Each saved deck shows at a glance whether you can build it.
+        val owned = CollectionStore.all(this).associateBy { it.name.lowercase() }
+        val labels = deckNames.map { n ->
+            val r = DeckCheck.check(d.optString(n), { owned[it.lowercase()]?.copies ?: 0 }, { "?" })
+            val miss = r.total - r.owned
+            if (miss == 0) "$n  ✓ complete" else "$n  · missing $miss"
+        }
         decksSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
-            listOf(if (deckNames.isEmpty()) "No saved decks" else "Saved decks…") + deckNames)
+            listOf(if (deckNames.isEmpty()) "No saved decks" else "Saved decks…") + labels)
         decksSpinner.setSelection(select?.let { deckNames.indexOf(it) + 1 }?.takeIf { it > 0 } ?: 0)
         decksSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(p: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
@@ -90,6 +97,11 @@ class DeckCheckActivity : Activity() {
         col.addView(out)
         setContentView(page(col))
         loadDeckList()
+        // Opened right after tapping Export in Arena? Use the deck on the clipboard.
+        if (input.text.isBlank()) {
+            val clip = runCatching { getSystemService(ClipboardManager::class.java).primaryClip?.getItemAt(0)?.coerceToText(this)?.toString() }.getOrNull()
+            if (clip != null && DeckCheck.parse(clip).size >= 3) input.setText(clip)
+        }
         if (input.text.isNotBlank()) run()
     }
 
