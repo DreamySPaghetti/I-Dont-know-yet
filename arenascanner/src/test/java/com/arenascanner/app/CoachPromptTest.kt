@@ -108,6 +108,13 @@ class CoachPromptTest {
         assertEquals(listOf("You can only play one land per turn."), CoachPrompt.check("PLAY: Play the basic Island and the basic Island.", b))
     }
 
+    @Test fun retryNamesTheMistakesAndKeepsTheFormat() {
+        val r = CoachPrompt.retry("Board...\nWhat now? Answer in exactly this format:\nPLAY: ...\nWHY: ...", "PLAY: Cast Aegis Turtle", listOf("Aegis Turtle is already on your battlefield."))
+        assertTrue(r.contains("My first answer was: \"PLAY: Cast Aegis Turtle\""))
+        assertTrue(r.contains("- Aegis Turtle is already on your battlefield."))
+        assertTrue(r.endsWith("PLAY: ...\nWHY: ..."))
+    }
+
     @Test fun typeLineIsNotACard() {
         val b = CoachPrompt.analyze(listOf(Seen("Basic Land - Plains", 0.3f, 0.8f, 0.012f)), match)
         assertTrue(b.cards.isEmpty())

@@ -216,6 +216,16 @@ object CoachPrompt {
         return out.distinct()
     }
 
+    /** Second try after [check] found problems: same board, plus what was wrong with the first answer. */
+    fun retry(prompt: String, answer: String, problems: List<String>): String {
+        val q = prompt.lastIndexOf("Answer in exactly this format:")
+        val head = if (q > 0) prompt.substring(0, q) else prompt + "\n"
+        val tail = if (q > 0) prompt.substring(q) else "Answer in exactly this format:\nPLAY: ...\nWHY: ..."
+        return head + "My first answer was: \"" + answer.replace('\n', ' ').take(300) + "\"\n" +
+            "That answer is wrong because:\n" + problems.joinToString("\n") { "- $it" } +
+            "\nGive a corrected answer that avoids these mistakes. " + tail
+    }
+
     /** One-line board description, saved with a lesson so it can be shown back to the model. */
     fun summary(b: Board): String {
         val parts = mutableListOf<String>()

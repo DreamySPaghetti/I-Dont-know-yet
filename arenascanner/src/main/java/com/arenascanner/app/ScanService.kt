@@ -302,6 +302,7 @@ class ScanService : Service() {
                     val added = CollectionStore.recordScan(this, counts)
                     found += added
                     updatedTotal += CollectionStore.lastUpdated
+                    if (added > 0 || CollectionStore.lastUpdated > 0) updateNotification()
                     saveDebug(bmp, result)
                     main.post {
                         if (added > 0) flash("+$added")
@@ -537,9 +538,9 @@ class ScanService : Service() {
             .addOnFailureListener { showPanel("Couldn't read the screen: ${it.message}"); coachBusy = false }
     }
 
-    private fun askGemma(image: ByteArray, prompt: String) {
+    private fun askGemma(image: ByteArray, prompt: String, firstAnswer: String? = null, startedAt: Long = System.currentTimeMillis()) {
         val g = gemma ?: run { main.post { coachBusy = false }; return }
-        val started = System.currentTimeMillis()
+        val started = startedAt
         g.ask(image, prompt,
             onText = { t -> lastAnswer = t.trim(); main.post { showPanel(lastAnswer) } },
             onDone = {
@@ -547,14 +548,22 @@ class ScanService : Service() {
                 val used = Regex("Lessons from my past games").containsMatchIn(prompt)
                 val b = lastBoard
                 val warnings = b?.let { CoachPrompt.check(lastAnswer, it) }.orEmpty()
+                // One self-correction: tell the model what it got wrong and ask again.
+                if (warnings.isNotEmpty() && firstAnswer == null) {
+                    val retry = CoachPrompt.retry(prompt, lastAnswer, warnings)
+                    main.post { showPanel("Double-checking the answer…\n\n" + warnings.joinToString("\n") { "⚠ $it" }) }
+                    coachExec.execute { askGemma(image, retry, lastAnswer, started) }
+                    return@ask
+                }
                 runCatching {
                     CoachLog.add(this, lastTime, lastFull, org.json.JSONObject()
                         .put("phase", b?.phase?.name).put("seconds", secs).put("backend", gemma?.backendName)
-                        .put("board", b?.let { CoachPrompt.summary(it) }).put("prompt", prompt).put("answer", lastAnswer).put("warnings", org.json.JSONArray(warnings)))
+                        .put("board", b?.let { CoachPrompt.summary(it) }).put("prompt", prompt).put("answer", lastAnswer).put("warnings", org.json.JSONArray(warnings)).put("first_answer", firstAnswer ?: ""))
                 }
                 main.post {
                     val warn = if (warnings.isEmpty()) "" else "\n\n" + warnings.joinToString("\n") { "⚠ $it" }
-                    panel?.let { it.text = styled("$lastAnswer$warn\n\n(${secs}s${if (used) " · used your past lessons" else ""} · saved to match log)") }
+                    val fixed = if (firstAnswer != null) " · corrected itself" else ""
+                    panel?.let { it.text = styled("$lastAnswer$warn\n\n(${secs}s${if (used) " · used your past lessons" else ""}$fixed · saved to match log)") }
                     actions?.visibility = android.view.View.VISIBLE
                     coachBusy = false
                 }
@@ -713,6 +722,16 @@ class ScanService : Service() {
         return true
     }
 
+    private var lastNotifyAt = 0L
+
+    /** Keeps the scanning notification's text current (at most once a second). */
+    private fun updateNotification() {
+        val now = System.currentTimeMillis()
+        if (now - lastNotifyAt < 1000) return
+        lastNotifyAt = now
+        getSystemService(NotificationManager::class.java).notify(1, notification())
+    }
+
     private fun notification(): Notification {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CHANNEL, "Scanning", NotificationManager.IMPORTANCE_LOW))
@@ -723,6 +742,7 @@ class ScanService : Service() {
             .setSmallIcon(android.R.drawable.ic_menu_search)
             .setContentTitle(if (coachMode) "Move coach is on" else "Arena Scanner is reading your screen")
             .setContentText(if (coachMode) "On your turn, tap the Coach button. Long-press it to stop."
+                else if (found + updatedTotal > 0) "$found new cards, $updatedTotal counts updated so far. Tap the button to pause."
                 else "Scroll through your collection; it scans as you go. Tap the button to pause.")
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, "Stop", stop).build())

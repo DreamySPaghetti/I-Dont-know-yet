@@ -68,6 +68,14 @@ class DeckCheckActivity : Activity() {
             textSize = 17f; setTypeface(typeface, Typeface.BOLD)
             text = if (missing == 0) "✓ You own every card (${r.total})." else "You own ${r.owned} of ${r.total} cards. Missing $missing."
         })
+        if (missing > 0) out.addView(Button(this).apply {
+            text = "Copy missing cards"
+            setOnClickListener {
+                val list = r.lines.filter { it.missing > 0 }.joinToString("\n") { "${it.missing} ${it.name}" }
+                getSystemService(ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("Missing cards", list))
+                android.widget.Toast.makeText(this@DeckCheckActivity, "Copied ${r.lines.count { it.missing > 0 }} cards", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        })
         val wild = r.wildcards.filter { it.value > 0 }
         if (wild.isNotEmpty()) out.addView(TextView(this).apply {
             textSize = 15f; setPadding(0, (6 * dp).toInt(), 0, (10 * dp).toInt())
