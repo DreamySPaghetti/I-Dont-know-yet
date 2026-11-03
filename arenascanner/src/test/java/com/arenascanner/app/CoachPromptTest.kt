@@ -134,7 +134,7 @@ class CoachPromptTest {
         val b = CoachPrompt.analyze(blockScreen, match)
         val f = CoachPrompt.combatFacts(b)!!
         assertTrue(f, f.contains("If their 2/2 attacks: your 5/3 kills it and survives; your 2/1 trades with it"))
-        assertTrue(f, f.contains("If their 1/1 attacks: your 5/3 kills it and survives; your 2/1 kills it and survives"))
+        assertTrue(f, f.contains("If their 1/1 attacks: your 5/3 kills it and survives; your 2/1 trades with it"))
     }
 
     @Test fun attackMath() {
