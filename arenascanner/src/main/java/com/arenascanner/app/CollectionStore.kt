@@ -4,8 +4,11 @@ import android.content.Context
 import org.json.JSONObject
 import java.io.File
 
-/** One owned card: [copies] is 1–4 (Arena never needs more than 4 of a card). */
-data class Owned(val name: String, val rarity: String, var copies: Int)
+/**
+ * One owned card: [copies] is 1–4 (Arena never needs more than 4 of a card).
+ * [manual] is true once you set the count yourself; scans then leave it alone.
+ */
+data class Owned(val name: String, val rarity: String, var copies: Int, var manual: Boolean = false)
 
 /** The scanned collection, saved as a small JSON file. Shared by the screen and the scan service. */
 object CollectionStore {
@@ -18,19 +21,31 @@ object CollectionStore {
         load(ctx); return cards.values.sortedBy { it.name.lowercase() }
     }
 
-    /** Adds cards seen in a scan. Returns how many were new. Existing cards keep their copy count. */
-    @Synchronized fun addSeen(ctx: Context, seen: List<Card>): Int {
+    /**
+     * Records cards seen in a scan, each with the copies read from its pips (null = couldn't tell).
+     * New cards get the read count, or 1. Known cards take a newly read count unless you set it by hand.
+     * Returns how many cards were new.
+     */
+    @Synchronized fun recordScan(ctx: Context, seen: List<Pair<Card, Int?>>): Int {
         load(ctx)
         var added = 0
-        for (c in seen) if (!cards.containsKey(c.name)) { cards[c.name] = Owned(c.name, c.rarity, 1); added++ }
-        if (added > 0) save(ctx)
+        var changed = false
+        for ((c, n) in seen) {
+            val ex = cards[c.name]
+            if (ex == null) {
+                cards[c.name] = Owned(c.name, c.rarity, (n ?: 1).coerceIn(1, 4)); added++; changed = true
+            } else if (n != null && !ex.manual && ex.copies != n) {
+                ex.copies = n.coerceIn(1, 4); changed = true
+            }
+        }
+        if (changed) save(ctx)
         return added
     }
 
     @Synchronized fun setCopies(ctx: Context, name: String, copies: Int) {
         load(ctx)
         val o = cards[name] ?: return
-        if (copies <= 0) cards.remove(name) else o.copies = copies.coerceAtMost(4)
+        if (copies <= 0) cards.remove(name) else { o.copies = copies.coerceAtMost(4); o.manual = true }
         save(ctx)
     }
 
@@ -48,13 +63,13 @@ object CollectionStore {
         val o = JSONObject(f.readText())
         for (k in o.keys()) {
             val c = o.getJSONObject(k)
-            cards[k] = Owned(k, c.optString("r", "?"), c.optInt("q", 1))
+            cards[k] = Owned(k, c.optString("r", "?"), c.optInt("q", 1), c.optBoolean("m", false))
         }
     }
 
     private fun save(ctx: Context) {
         val o = JSONObject()
-        for ((k, v) in cards) o.put(k, JSONObject().put("r", v.rarity).put("q", v.copies))
+        for ((k, v) in cards) o.put(k, JSONObject().put("r", v.rarity).put("q", v.copies).put("m", v.manual))
         file(ctx).writeText(o.toString())
     }
 }

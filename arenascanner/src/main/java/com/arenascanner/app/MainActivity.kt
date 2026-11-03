@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -12,6 +13,8 @@ import android.graphics.Typeface
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
@@ -64,17 +67,20 @@ class MainActivity : Activity() {
         scanButton = Button(this).apply { setOnClickListener { toggleScan() } }
         val exportButton = Button(this).apply { text = "Export to collection page"; setOnClickListener { export() } }
         val clearButton = Button(this).apply { text = "Clear collection"; setOnClickListener { confirmClear() } }
+        val debugButton = Button(this).apply { text = "Save last scan image"; setOnClickListener { saveDebugImage() } }
         val help = TextView(this).apply {
             textSize = 13f
             setTextColor(Color.DKGRAY)
-            text = "How to scan: tap Start scanning and allow screen capture. In Arena, open Collection. " +
-                "Tap the floating Scan button on each page, then scroll. Drag the button to move it; long-press it to stop.\n\n" +
-                "New cards are added with 1 copy. Use − and + below to set how many you own."
+            text = "How to scan: tap Start scanning and allow screen capture. In Arena, open Collection and scroll slowly. " +
+                "Each time you stop scrolling for a moment, it reads the cards and the copy pips under them.\n\n" +
+                "Floating button: tap to pause or resume, long-press to stop, drag it to an empty spot so it doesn't cover cards. " +
+                "It shows +N when it finds new cards.\n\n" +
+                "If a count is wrong, fix it with − and +. Scans never change a count you set yourself."
         }
         summary = TextView(this).apply { textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, pad / 2) }
         val list = ListView(this).apply { adapter = this@MainActivity.adapter }
 
-        for (v in listOf(heading, status, dbButton, scanButton, exportButton, clearButton, help, summary)) root.addView(v)
+        for (v in listOf(heading, status, dbButton, scanButton, exportButton, clearButton, debugButton, help, summary)) root.addView(v)
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         title = "Arena Scanner"
@@ -171,6 +177,24 @@ class MainActivity : Activity() {
         getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Arena collection", text))
         toast("Copied. Paste it into \"Paste a list of cards\" on your Arena Collection page.")
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Share collection"))
+    }
+
+    /**
+     * Copies the last scanned screen (with red name boxes, cyan pip areas and the counts read) to
+     * Pictures/ArenaScanner, so it can be shared when counts come out wrong.
+     */
+    private fun saveDebugImage() {
+        val f = ScanService.debugFile(this)
+        if (!f.exists()) { toast("No scan yet. Scan a page of your collection first."); return }
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "arena_scan_${System.currentTimeMillis()}.png")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/ArenaScanner")
+        }
+        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        if (uri == null) { toast("Couldn't save the image."); return }
+        contentResolver.openOutputStream(uri)?.use { out -> f.inputStream().use { it.copyTo(out) } }
+        toast("Saved to Pictures/ArenaScanner. Send it to Claude if counts look wrong.")
     }
 
     private fun confirmClear() {
