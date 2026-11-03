@@ -43,7 +43,8 @@ android {
 dependencies {
     // On-device text recognition (Latin script), bundled so it works offline.
     implementation("com.google.mlkit:text-recognition:16.0.1")
-    // On-device LLM runtime for the move coach (Gemma 4 E2B).
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.2")
+    // On-device LLM runtime for the move coach (Gemma 4 E2B). 0.19+ is needed for the current
+    // Gemma 4 files, whose vision encoder has several signatures (older versions fail to start).
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.0")
     testImplementation("junit:junit:4.13.2")
 }
