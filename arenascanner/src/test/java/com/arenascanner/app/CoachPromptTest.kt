@@ -188,6 +188,16 @@ class CoachPromptTest {
         assertFalse(f, f.contains("If their Ox 5/5 attacks"))
     }
 
+    @Test fun instantSpeedDuringCombat() {
+        val murder = Card("Murder", "C", rules = "{1}{B}{B} — Instant — Destroy target creature.")
+        val bear = Card("Grizzly Bears", "C", rules = "{1}{G} — Creature — Bear — 2/2")
+        val b = CoachPrompt.Board(listOf(murder to Zone.HAND, bear to Zone.HAND), emptyMap(), emptyMap(), null, null, CoachPrompt.Phase.BLOCK, emptyList())
+        assertTrue(CoachPrompt.build(b).contains("Instant-speed cards I could use right now: Murder."))
+        assertEquals(listOf("Grizzly Bears can't be cast now: it isn't an instant and doesn't have flash."),
+            CoachPrompt.check("PLAY: Cast Grizzly Bears and block.", b))
+        assertTrue(CoachPrompt.check("PLAY: Cast Murder on the attacker.", b).isEmpty())
+    }
+
     @Test fun attackMath() {
         val b = CoachPrompt.Board(emptyList(), emptyMap(), mapOf(Zone.MINE to listOf("5/3", "1/1"), Zone.THEIRS to listOf("2/2", "0/5")),
             null, null, CoachPrompt.Phase.ATTACK, emptyList())

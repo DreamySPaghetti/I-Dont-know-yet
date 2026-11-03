@@ -149,6 +149,10 @@ object CoachPrompt {
         else -> Zone.MINE
     }
 
+    /** Can be cast during combat or the opponent's turn. */
+    fun isInstantSpeed(c: Card) = c.rules.split(" — ").take(2).any { "Instant" in it } ||
+        Regex("\\bflash\\b", RegexOption.IGNORE_CASE).containsMatchIn(c.rules)
+
     /** Instants and sorceries never stay on the battlefield. */
     fun isSpell(c: Card) = c.rules.split(" — ").take(2).any { "Instant" in it || "Sorcery" in it }
 
@@ -239,9 +243,16 @@ object CoachPrompt {
      * one that Arena says can't be played now, or more than one land.
      */
     fun check(answer: String, b: Board): List<String> {
-        if (b.phase !in setOf(Phase.MAIN1, Phase.MAIN2, Phase.UNKNOWN)) return emptyList()
         val play = Regex("PLAY:(.*)", RegexOption.IGNORE_CASE).find(answer)?.groupValues?.get(1)?.lowercase() ?: answer.lowercase()
         val out = mutableListOf<String>()
+        if (b.phase in setOf(Phase.BLOCK, Phase.ATTACK, Phase.OPPONENT)) {
+            // Outside my main phase only instants and flash cards can be cast.
+            if (Regex("\\b(cast|play)\\b").containsMatchIn(play))
+                for ((c, z) in b.cards) if (z == Zone.HAND && !isInstantSpeed(c) && c.name.lowercase() in play)
+                    out += "${c.name} can't be cast now: it isn't an instant and doesn't have flash."
+            return out.distinct()
+        }
+        if (b.phase !in setOf(Phase.MAIN1, Phase.MAIN2, Phase.UNKNOWN)) return emptyList()
         val hand = b.cards.filter { it.second == Zone.HAND }.map { it.first.name }.toSet()
         val mine = b.cards.filter { it.second == Zone.MINE }.map { it.first.name }.toSet()
         val castWords = Regex("\\b(cast|play|playing|casting)\\b").containsMatchIn(play)
@@ -475,6 +486,12 @@ object CoachPrompt {
         if (board.untappedLands != null && board.phase in setOf(Phase.MAIN1, Phase.MAIN2, Phase.UNKNOWN))
             sb.append("Mana: ${board.untappedLands} of my ${board.totalLands} lands are untapped, so I have about ${board.untappedLands} mana available now.\n\n")
         combatFacts(board)?.let { sb.append(it).append('\n') }
+        if (board.phase in setOf(Phase.BLOCK, Phase.ATTACK, Phase.OPPONENT)) {
+            val hand = unique.filter { it.second == Zone.HAND }.map { it.first }
+            val fast = hand.filter { isInstantSpeed(it) && (board.playable == null || it.name in board.playable) }
+            sb.append(if (fast.isEmpty()) "I have no instant-speed cards to use right now; only attacks or blocks matter.\n\n"
+                else "Instant-speed cards I could use right now: ${fast.joinToString(", ") { it.name }}. Nothing else in my hand can be cast at this moment.\n\n")
+        }
         // Small models follow what's closest to the question, so repeat the hard limits here.
         if (board.phase in setOf(Phase.MAIN1, Phase.MAIN2, Phase.UNKNOWN, Phase.ATTACK)) {
             val inPlay = unique.filter { it.second == Zone.MINE }.map { it.first.name }
