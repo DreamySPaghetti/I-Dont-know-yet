@@ -10,6 +10,8 @@ class MatcherTest {
         Card("Go for the Throat", "U"),
         Card("Llanowar Elves", "C"),
         Card("Opt", "C"),
+        Card("Forest", "C"),
+        Card("Wastes", "C"),
         Card("Fable of the Mirror-Breaker", "R", listOf("Fable of the Mirror-Breaker", "Reflection of Kiki-Jiki")),
     )
     private val m = Matcher(cards)
@@ -32,6 +34,11 @@ class MatcherTest {
     @Test fun shortWordsNeedExactMatch() {
         assertEquals("Opt", m.match("Opt")?.name)
         assertNull(m.match("Oft"))
+    }
+
+    @Test fun basicLandsIgnored() {
+        assertNull(m.match("Forest"))
+        assertNull(m.match("Wastes"))
     }
 
     @Test fun matchAllDeduplicates() {

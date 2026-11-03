@@ -11,6 +11,8 @@ class Matcher(cards: Collection<Card>) {
 
     init {
         for (c in cards) {
+            // Basic lands are free and unlimited in Arena, and "Forest" etc. appear in type lines.
+            if (normalize(c.name) in BASICS) continue
             add(normalize(c.name), c)
             // Double-faced cards: Arena prints only the face's own name on the card.
             for (face in c.faces) add(normalize(face), c)
@@ -56,6 +58,10 @@ class Matcher(cards: Collection<Card>) {
     }
 
     companion object {
+        private val BASICS = setOf("plains", "island", "swamp", "mountain", "forest", "wastes",
+            "snow covered plains", "snow covered island", "snow covered swamp", "snow covered mountain",
+            "snow covered forest", "snow covered wastes")
+
         fun normalize(s: String): String = s.lowercase()
             .replace('’', '\'').replace('‘', '\'')
             .replace(Regex("[^a-z0-9' ]"), " ")

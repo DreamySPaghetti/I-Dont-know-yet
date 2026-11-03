@@ -23,7 +23,8 @@ object CollectionStore {
 
     /**
      * Records cards seen in a scan, each with the copies read from its diamonds (null = couldn't tell, 0 = not owned).
-     * New cards get the read count, or 1. Known cards take a newly read count unless you set it by hand.
+     * New cards are added only once a count has been read. Known cards take a newly read count unless
+     * you set it by hand.
      * Returns how many cards were new.
      */
     @Synchronized fun recordScan(ctx: Context, seen: List<Pair<Card, Int?>>): Int {
@@ -34,7 +35,10 @@ object CollectionStore {
             if (n == 0) continue // every diamond empty: not owned
             val ex = cards[c.name]
             if (ex == null) {
-                cards[c.name] = Owned(c.name, c.rarity, (n ?: 1).coerceIn(1, 4)); added++; changed = true
+                // Only add a card once its diamonds have been read. A name with no readable diamonds
+                // above it is usually a word in some card's rules text (e.g. "Flashback"), not a card.
+                if (n == null) continue
+                cards[c.name] = Owned(c.name, c.rarity, n.coerceIn(1, 4)); added++; changed = true
             } else if (n != null && !ex.manual && ex.copies != n) {
                 ex.copies = n.coerceIn(1, 4); changed = true
             }

@@ -76,6 +76,7 @@ class MainActivity : Activity() {
                 "It scans continuously as you scroll, reading each card's name and the 4 diamonds above it (filled = copies you own).\n\n" +
                 "Floating button: tap to pause or resume, long-press to stop, drag it to an empty spot so it doesn't cover cards. " +
                 "It shows +N when it finds new cards.\n\n" +
+                "A card is added once its diamonds have been read, so scroll past each card at least once. " +
                 "If a count is wrong, fix it with − and +. Scans never change a count you set yourself."
         }
         summary = TextView(this).apply { textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, pad / 2) }
