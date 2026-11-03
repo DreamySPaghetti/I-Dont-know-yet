@@ -36,8 +36,9 @@ import java.io.File
 import java.util.concurrent.Executors
 
 /**
- * Captures the screen while Arena is open. Whenever the screen stops moving and shows something
- * new, it reads the card names with ML Kit, counts the copy pips under each card, and records them.
+ * Captures the screen while Arena is open and scans continuously as you scroll: as soon as one scan
+ * finishes, the next frame is read if the screen has changed. Each scan reads the card names with
+ * ML Kit, counts the copy pips under each card, and records them.
  * The floating button pauses/resumes (tap) or stops (long-press).
  */
 class ScanService : Service() {
@@ -46,7 +47,7 @@ class ScanService : Service() {
         const val EXTRA_DATA = "data"
         const val ACTION_STOP = "stop"
         private const val CHANNEL = "scan"
-        private const val TICK_MS = 400L
+        private const val TICK_MS = 120L
         @Volatile var running = false
         fun debugFile(ctx: android.content.Context) = File(ctx.filesDir, "last_scan.png")
     }
@@ -65,7 +66,10 @@ class ScanService : Service() {
     @Volatile private var busy = false
     private var width = 0
     private var height = 0
-    private val settle = Settle()
+    // stableTicks = 0: don't wait for scrolling to stop, just skip frames that look like the last scan.
+    private val settle = Settle(stableTicks = 0, newDiff = 4.0)
+    /** Highest count read for each card during this session; a pip hidden for a frame won't lower it. */
+    private val sessionMax = HashMap<String, Int>()
     private var found = 0
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
     private val matcher by lazy { Matcher(CardDb.load(this)) }
@@ -110,7 +114,7 @@ class ScanService : Service() {
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, r.surface, null, null)
     }
 
-    /** Runs on the bg thread every [TICK_MS]: scan once the screen has settled on something new. */
+    /** Runs on the bg thread every [TICK_MS]: whenever no scan is running, scan the frame if it's new. */
     private fun tick() {
         if (!running) return
         val img = latest
@@ -148,7 +152,7 @@ class ScanService : Service() {
     private fun scan(bmp: Bitmap) {
         if (isBlack(bmp)) { main.post { flash("Black", hold = 3000) }; return }
         busy = true
-        main.post { if (!paused) overlay?.text = "…" }
+
         recognizer.process(InputImage.fromBitmap(bmp, 0))
             .addOnSuccessListener { text ->
                 // Read the pips on a background thread: it touches many pixels.
@@ -160,11 +164,16 @@ class ScanService : Service() {
                         hits.add(c to Box(b.left, b.top, b.right, b.bottom))
                     }
                     val result = countPips(bmp, hits)
-                    val added = CollectionStore.recordScan(this, result.map { it.first to it.third })
+                    val counts = result.map { (card, _, n) ->
+                        val best = maxOf(n ?: 0, sessionMax[card.name] ?: 0)
+                        if (best > 0) sessionMax[card.name] = best
+                        card to (if (best > 0) best else null)
+                    }
+                    val added = CollectionStore.recordScan(this, counts)
                     found += added
                     saveDebug(bmp, result)
                     main.post {
-                        flash(if (added > 0) "+$added" else if (hits.isEmpty()) "0" else "✓")
+                        if (added > 0) flash("+$added")
                         busy = false
                     }
                 }
@@ -300,7 +309,7 @@ class ScanService : Service() {
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_search)
             .setContentTitle("Arena Scanner is reading your screen")
-            .setContentText("Scroll through your collection; it scans each time you stop. Tap the button to pause.")
+            .setContentText("Scroll through your collection; it scans as you go. Tap the button to pause.")
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, "Stop", stop).build())
             .setOngoing(true)

@@ -67,4 +67,13 @@ class VisionTest {
         assertFalse(s.offer(b))
         assertTrue(s.offer(b))           // settled on a new screen
     }
+
+    @Test fun continuousModeScansWhileMoving() {
+        val s = Settle(stableTicks = 0, newDiff = 4.0)
+        assertFalse(s.offer(IntArray(10) { 50 }))   // first frame only sets the baseline
+        assertTrue(s.offer(IntArray(10) { 80 }))    // moving: scan anyway
+        s.scanned(IntArray(10) { 80 })
+        assertFalse(s.offer(IntArray(10) { 82 }))   // barely changed: skip
+        assertTrue(s.offer(IntArray(10) { 100 }))   // scrolled on: scan
+    }
 }
