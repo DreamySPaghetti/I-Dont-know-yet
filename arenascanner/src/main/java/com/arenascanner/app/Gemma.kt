@@ -79,7 +79,8 @@ class Gemma(private val ctx: Context) : AutoCloseable {
                 e.initialize()
                 engine = e
                 backendName = name
-                warmUp()
+                // If the fast path starts but can't answer, drop to the next setup instead of failing every question.
+                if (!warmUp() && specCfg != null) throw IllegalStateException("speculative decoding failed its first answer")
                 return
             } catch (t: Throwable) {
                 last = t
@@ -136,12 +137,13 @@ class Gemma(private val ctx: Context) : AutoCloseable {
      * One tiny question at load time so the GPU programs for both the image and text paths are
      * built now (part of the 10 s "Loading") instead of slowing down the first real answer.
      */
-    private fun warmUp() {
+    private fun warmUp(): Boolean {
         val bmp = android.graphics.Bitmap.createBitmap(64, 64, android.graphics.Bitmap.Config.ARGB_8888)
         val jpg = java.io.ByteArrayOutputStream().also { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, it) }.toByteArray()
         val done = java.util.concurrent.CountDownLatch(1)
-        runCatching { ask(jpg, "Reply with OK.", {}, { done.countDown() }, { done.countDown() }) }.onFailure { done.countDown() }
-        done.await(30, java.util.concurrent.TimeUnit.SECONDS)
+        var ok = false
+        runCatching { ask(jpg, "Reply with OK.", {}, { ok = true; done.countDown() }, { done.countDown() }) }.onFailure { done.countDown() }
+        return done.await(30, java.util.concurrent.TimeUnit.SECONDS) && ok
     }
 
     override fun close() {
