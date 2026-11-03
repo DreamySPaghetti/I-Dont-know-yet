@@ -371,7 +371,12 @@ class ScanService : Service() {
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP or Gravity.START; x = (8 * d).toInt(); y = (120 * d).toInt() }
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            // Back where you last dragged it.
+            x = Gemma.prefs(this@ScanService).getInt("btn_x", (8 * d).toInt())
+            y = Gemma.prefs(this@ScanService).getInt("btn_y", (120 * d).toInt())
+        }
 
         // Drag to move; tap to pause/resume; long-press to stop.
         val slop = ViewConfiguration.get(this).scaledTouchSlop
@@ -385,7 +390,9 @@ class ScanService : Service() {
                         moved = true; lp.x = startX + dx.toInt(); lp.y = startY + dy.toInt(); wm.updateViewLayout(btn, lp)
                     }
                 }
-                MotionEvent.ACTION_UP -> if (!moved) {
+                MotionEvent.ACTION_UP -> if (moved) {
+                    Gemma.prefs(this).edit().putInt("btn_x", lp.x).putInt("btn_y", lp.y).apply()
+                } else {
                     if (e.eventTime - downAt > 600) stopSelf()
                     else if (coachMode) coachTap()
                     else {
@@ -645,6 +652,7 @@ class ScanService : Service() {
                 visibility = android.view.View.GONE
                 addView(btn("👍 Good play") { saveLesson(lastAnswer, good = true) })
                 addView(btn("✏️ Fix it") { showFix() })
+                addView(btn("↻ Ask again") { coachTap() })
                 addView(btn("✕") { panelBox?.visibility = android.view.View.GONE })
             }
             val boxView = android.widget.LinearLayout(this).apply {

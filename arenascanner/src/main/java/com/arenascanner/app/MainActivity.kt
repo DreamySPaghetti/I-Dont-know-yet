@@ -38,6 +38,8 @@ class MainActivity : Activity() {
     private lateinit var dbButton: Button
     private lateinit var scanButton: Button
     private lateinit var summary: TextView
+    private var query = ""
+    private var rarityFilter: String? = null
     private lateinit var autoScrollBox: android.widget.CheckBox
     private val adapter = CardAdapter()
     private val dp get() = resources.displayMetrics.density
@@ -84,6 +86,24 @@ class MainActivity : Activity() {
         }
         summary = TextView(this).apply { textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, pad / 2) }
         val list = ListView(this).apply { adapter = this@MainActivity.adapter }
+        // Find a card fast: search by name and filter by rarity.
+        val search = android.widget.EditText(this).apply {
+            id = 4243; hint = "Search your cards"; isSingleLine = true
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun afterTextChanged(s: android.text.Editable?) { query = s.toString().trim().lowercase(); refresh() }
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            })
+        }
+        val rarity = android.widget.Spinner(this).apply {
+            id = 4244
+            adapter = android.widget.ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, listOf("All", "Mythic", "Rare", "Uncommon", "Common"))
+            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) { rarityFilter = listOf(null, "M", "R", "U", "C")[pos]; refresh() }
+                override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+            }
+        }
+        val deckButton = Button(this).apply { text = "Deck check: what am I missing?"; setOnClickListener { startActivity(Intent(this@MainActivity, DeckCheckActivity::class.java)) } }
 
         fun section(t: String) = TextView(this).apply {
             text = t.uppercase(); textSize = 12f; letterSpacing = 0.08f; setTextColor(Color.parseColor("#5B6678"))
@@ -112,8 +132,8 @@ class MainActivity : Activity() {
             setOnClickListener { help.visibility = if (help.visibility == View.GONE) View.VISIBLE else View.GONE
                 text = if (help.visibility == View.GONE) "How to scan ▸" else "How to scan ▾" }
         }
-        for (v in listOf(heading, status, section("Play"), coachButton, section("Collection"), scanButton, autoScrollBox,
-            row(exportButton, csvButton), section("More"), row(dbButton, helpToggle), row(clearButton, debugButton), help, summary)) root.addView(v)
+        for (v in listOf(heading, status, section("Play"), coachButton, deckButton, section("Collection"), scanButton, autoScrollBox,
+            row(exportButton, csvButton), section("More"), row(dbButton, helpToggle), row(clearButton, debugButton), help, summary, row(search, rarity))) root.addView(v)
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         title = "Arena Scanner"
@@ -133,10 +153,13 @@ class MainActivity : Activity() {
         scanButton.text = if (ScanService.running && !ScanService.coaching) "Stop scanning" else "Start scanning"
         if (autoScrollBox.isChecked && AutoScroll.instance == null) autoScrollBox.text = "Auto-scroll (needs Accessibility: tap to set up)"
         else autoScrollBox.text = "Auto-scroll the collection while scanning"
-        adapter.items = CollectionStore.all(this)
+        val all = CollectionStore.all(this)
+        adapter.items = all.filter { (query.isEmpty() || query in it.name.lowercase()) && (rarityFilter == null || it.rarity == rarityFilter) }
         adapter.notifyDataSetChanged()
-        val copies = adapter.items.sumOf { it.copies }
-        summary.text = "Your collection: ${adapter.items.size} cards, $copies copies"
+        val by = all.groupingBy { it.rarity }.eachCount()
+        summary.text = "Your collection: ${all.size} cards, ${all.sumOf { it.copies }} copies\n" +
+            "Mythic ${by["M"] ?: 0} · Rare ${by["R"] ?: 0} · Uncommon ${by["U"] ?: 0} · Common ${by["C"] ?: 0}" +
+            if (adapter.items.size != all.size) "\nShowing ${adapter.items.size}" else ""
     }
 
     private var downloading = false
