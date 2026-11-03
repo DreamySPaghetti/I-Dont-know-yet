@@ -44,7 +44,7 @@ class CoachActivity : Activity() {
     private lateinit var step3: TextView
     private var copying = false
     private var updatingRules = false
-    private val dp get() = resources.displayMetrics.density
+    private val density get() = resources.displayMetrics.density
 
     companion object {
         private const val REQ_CAPTURE = 11
@@ -56,99 +56,66 @@ class CoachActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val pad = (16 * dp).toInt()
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
-        val scroll = ScrollView(this).apply { addView(col) }
-        scroll.setOnApplyWindowInsetsListener { v, insets ->
-            val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-            insets
-        }
-        fun label(t: String, size: Float = 14f, bold: Boolean = false) = TextView(this).apply {
-            text = t; textSize = size; if (bold) setTypeface(typeface, Typeface.BOLD); setPadding(0, pad / 2, 0, pad / 4)
-        }
-        col.addView(label("Move coach", 24f, true))
-        col.addView(label("On your turn, tap the floating Coach button. It reads the board and asks Gemma 4 E2B, " +
-            "running on your phone, for the best play. Nothing is sent online.").apply { setTextColor(context.secondaryText()) })
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val prefs = Gemma.prefs(this)
+        col.addView(titleText("Move coach", 28f))
+        col.addView(mutedText("Suggests your best play during a game. Gemma runs on your phone; nothing is sent online.")
+            .apply { setPadding(0, dp(2), 0, dp(12)) })
 
-        step1 = label("", 16f, true); col.addView(step1)
-        modelStatus = label("")
-        downloadBtn = Button(this).apply { setOnClickListener { downloadModel() } }
-        pickBtn = Button(this).apply { text = "Use a .litertlm file I already have"; setOnClickListener { pickModel() } }
-        for (v in listOf(modelStatus, downloadBtn, pickBtn)) col.addView(v)
+        // Setup: model + rules text
+        step1 = titleText("", 17f); modelStatus = mutedText()
+        downloadBtn = primaryButton("Download Gemma 4 E2B (2.6 GB)", COACH) { downloadModel() }
+        pickBtn = tonalButton("Use a .litertlm file I already have") { pickModel() }
+        col.addView(card(step1, modelStatus, downloadBtn, pickBtn))
+        step2 = titleText("", 17f); rulesStatus = mutedText()
+        rulesBtn = tonalButton("Get card rules text") { updateRules() }
+        col.addView(card(step2, rulesStatus, rulesBtn))
 
-        step2 = label("", 16f, true); col.addView(step2)
-        rulesStatus = label("")
-        rulesBtn = Button(this).apply { text = "Update card list with rules text"; setOnClickListener { updateRules() } }
-        col.addView(rulesStatus); col.addView(rulesBtn)
+        // Start + options
+        step3 = titleText("", 17f)
+        startBtn = primaryButton("Start coach", COACH) { toggleCoach() }.apply { textSize = 17f; minHeight = dp(56) }
+        val sizes = listOf(13f, 15f, 18f)
+        val styles = listOf("quick", "detailed")
+        col.addView(card(
+            step3,
+            startBtn,
+            switchRow("Auto advice at my main phase, attacks, blocks and mulligan", prefs.getBoolean("auto_advice", true)) { on ->
+                prefs.edit().putBoolean("auto_advice", on).apply()
+            },
+            mutedText("Answers"),
+            chips(listOf("Quick: play + why", "Detailed: + alternative"), styles.indexOf(prefs.getString("coach_style", "quick")).coerceAtLeast(0)) { i ->
+                prefs.edit().putString("coach_style", styles[i]).apply()
+            },
+            mutedText("Advice text size"),
+            chips(listOf("Small", "Medium", "Large"), sizes.indexOf(prefs.getFloat("panel_text", 15f)).coerceAtLeast(1)) { i ->
+                prefs.edit().putFloat("panel_text", sizes[i]).apply()
+            },
+        ))
 
-        step3 = label("", 16f, true); col.addView(step3)
-        col.addView(android.widget.RadioGroup(this).apply {
-            orientation = android.widget.RadioGroup.HORIZONTAL
-            addView(TextView(context).apply { text = "Advice text: " })
-            val cur = Gemma.prefs(context).getFloat("panel_text", 15f)
-            for ((label, size) in listOf("Small" to 13f, "Medium" to 15f, "Large" to 18f)) addView(android.widget.RadioButton(context).apply {
-                text = label; id = size.toInt() + 5000; isChecked = cur == size
-                setOnClickListener { Gemma.prefs(context).edit().putFloat("panel_text", size).apply() }
-            })
-        })
-        col.addView(android.widget.RadioGroup(this).apply {
-            orientation = android.widget.RadioGroup.HORIZONTAL
-            addView(TextView(context).apply { text = "Answers: " })
-            val cur = Gemma.prefs(context).getString("coach_style", "quick")
-            for ((label, key) in listOf("Quick (play + why)" to "quick", "Detailed (+ alternative)" to "detailed")) addView(android.widget.RadioButton(context).apply {
-                text = label; id = 6000 + key.length; isChecked = cur == key
-                setOnClickListener { Gemma.prefs(context).edit().putString("coach_style", key).apply() }
-            })
-        })
-        col.addView(android.widget.CheckBox(this).apply {
-            text = "Auto advice: ask by itself at my main phase, attacks, blocks and mulligan"
-            isChecked = Gemma.prefs(context).getBoolean("auto_advice", true)
-            setOnCheckedChangeListener { _, on -> Gemma.prefs(context).edit().putBoolean("auto_advice", on).apply() }
-        })
-        startBtn = Button(this).apply {
-            textSize = 18f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#6A3FB5"))
-            minHeight = (56 * dp).toInt(); setOnClickListener { toggleCoach() }
-        }
-        col.addView(startBtn)
-        col.addView(label("Try it without a game", 16f, true))
-        col.addView(label("Pick an Arena screenshot from your gallery and see what the coach would say.").apply { textSize = 13f })
-        testBtn = Button(this).apply { text = "Test on a screenshot"; setOnClickListener { pickScreenshot() } }
-        col.addView(testBtn)
-        col.addView(label("Match log", 16f, true))
-        logStatus = label("")
-        col.addView(logStatus)
-        col.addView(LinearLayout(this).apply {
-            addView(Button(context).apply { text = "Save log as zip"; setOnClickListener { exportLog() } },
-                LinearLayout.LayoutParams(0, -2, 1f))
-            addView(Button(context).apply { text = "Clear log"; setOnClickListener {
-                android.app.AlertDialog.Builder(this@CoachActivity).setMessage("Delete the saved screenshots and answers?")
-                    .setPositiveButton("Delete") { _, _ -> CoachLog.clear(this@CoachActivity); refresh() }
+        // Try without a game
+        testBtn = tonalButton("Test on a screenshot") { pickScreenshot() }
+        col.addView(card(titleText("Try it without a game", 17f),
+            mutedText("Pick an Arena screenshot from your gallery and see what the coach would say."), testBtn))
+
+        // Match log + lessons
+        logStatus = mutedText()
+        col.addView(card(titleText("Match log", 17f), logStatus,
+            rowOf(tonalButton("Save as zip") { exportLog() }, tonalButton("Clear") {
+                android.app.AlertDialog.Builder(this).setMessage("Delete the saved screenshots and answers?")
+                    .setPositiveButton("Delete") { _, _ -> CoachLog.clear(this); refresh() }
                     .setNegativeButton("Cancel", null).show()
-            } }, LinearLayout.LayoutParams(0, -2, 1f))
-        })
-        col.addView(label("Lessons", 16f, true))
-        lessonsStatus = label("")
-        col.addView(lessonsStatus)
-        col.addView(LinearLayout(this).apply {
-            addView(Button(context).apply { text = "Export training data"; setOnClickListener { exportLessons() } },
-                LinearLayout.LayoutParams(0, -2, 1f))
-            addView(Button(context).apply { text = "Clear lessons"; setOnClickListener { confirmClearLessons() } },
-                LinearLayout.LayoutParams(0, -2, 1f))
-        })
-        col.addView(label(
-            "Tips:\n" +
-            "• After each answer tap 👍 Good play or ✏️ Fix it. The coach reuses your 3 most similar lessons next time.\n" +
-            "• Tap Coach when it's your main phase, with your hand visible.\n" +
-            "• Gemma takes a few seconds to answer; it's a small model, so treat its advice as a second opinion, " +
-            "not the final word. It can misread the board.\n" +
-            "• Tap the advice panel to hide it. Long-press the Coach button to turn the coach off.\n" +
-            "• The model uses about 3 GB of memory alongside Arena. If Arena or the coach closes unexpectedly, " +
-            "close other apps first.\n" +
-            "• Wizards' rules on live play assistance in ranked games are your call to check."
-        ).apply { setTextColor(context.secondaryText()); textSize = 13f })
-        setContentView(scroll)
-        title = "Move coach"
+            })))
+        lessonsStatus = mutedText()
+        col.addView(card(titleText("Lessons", 17f), lessonsStatus,
+            rowOf(tonalButton("Export") { exportLessons() }, tonalButton("Clear") { confirmClearLessons() })))
+
+        col.addView(card(titleText("Tips", 17f), mutedText(
+            "• After an answer, tap 👍 or ✏️ Fix it: the coach reuses your most similar lessons next time.\n" +
+            "• The gold outline shows the card it means. Tap the panel to hide it; long-press Coach to turn it off.\n" +
+            "• It's a small model: treat it as a second opinion. It can misread the board.\n" +
+            "• It uses about 3 GB of memory next to Arena. If an app closes unexpectedly, close others first.\n" +
+            "• Whether live advice is allowed in ranked games is your call to check.")))
+        setContentView(page(col))
     }
 
     override fun onResume() {
@@ -185,11 +152,12 @@ class CoachActivity : Activity() {
         val hasRules = CardDb.hasRules(this)
         step1.text = (if (ready) "✓ " else "1. ") + "Model"
         step2.text = (if (hasRules) "✓ " else "2. ") + "Card rules text"
-        step3.text = (if (ready && hasRules) "3. Ready — start the coach" else "3. Start")
+        step3.text = if (ready && hasRules) "Ready to play" else "3. Start"
         // Hide setup buttons once done (they come back if something is missing).
         downloadBtn.visibility = if (ready && !copying) android.view.View.GONE else android.view.View.VISIBLE
         pickBtn.visibility = downloadBtn.visibility
         rulesBtn.text = if (hasRules) "Refresh rules text (after a new set)" else "Get card rules text"
+        rulesBtn.visibility = if (hasRules && !updatingRules) android.view.View.GONE else android.view.View.VISIBLE
         startBtn.isEnabled = ready && CardDb.isReady(this)
         startBtn.alpha = if (startBtn.isEnabled) 1f else 0.5f
         val n = CoachLog.count(this)
@@ -433,7 +401,7 @@ class CoachActivity : Activity() {
                     testBtn.isEnabled = true; testBtn.text = "Test on a screenshot"
                     val body = TextView(this).apply {
                         setTextIsSelectable(true); textSize = 14f
-                        val pad = (16 * dp).toInt(); setPadding(pad, pad, pad, pad)
+                        val pad = (16 * density).toInt(); setPadding(pad, pad, pad, pad)
                         text = (error?.let { "Gemma error: ${it.message}" } ?: answer) +
                             (if (warnings.isEmpty()) "" else "\n\n" + warnings.joinToString("\n") { "⚠ $it" }) +
                             "\n\n($secs s · ${board.cards.distinctBy { it.first.name }.size} cards read · step ${board.phase.name})" +

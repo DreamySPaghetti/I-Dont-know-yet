@@ -64,41 +64,31 @@ class DeckCheckActivity : Activity() {
     }
 
     private fun toast(s: String) = android.widget.Toast.makeText(this, s, android.widget.Toast.LENGTH_SHORT).show()
-    private val dp get() = resources.displayMetrics.density
+    private val density get() = resources.displayMetrics.density
     private val rarityName = mapOf("M" to "Mythic", "R" to "Rare", "U" to "Uncommon", "C" to "Common", "?" to "Unknown")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val pad = (16 * dp).toInt()
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
-        val scroll = ScrollView(this).apply { addView(col) }
-        scroll.setOnApplyWindowInsetsListener { v, i ->
-            val b = i.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()); v.setPadding(b.left, b.top, b.right, b.bottom); i
-        }
-        col.addView(TextView(this).apply { text = "Deck check"; textSize = 24f; setTypeface(typeface, Typeface.BOLD) })
-        col.addView(TextView(this).apply {
-            text = "In Arena open a deck, tap Export, then Paste here. Shows what you own and the wildcards needed."
-            setTextColor(context.secondaryText()); setPadding(0, pad / 2, 0, pad / 2)
-        })
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(titleText("Deck check", 28f))
+        col.addView(mutedText("In Arena open a deck, tap Export, then Paste here. Shows what you own and the wildcards it costs.")
+            .apply { setPadding(0, dp(2), 0, dp(12)) })
         // Saved decks: pick one to load it, or save the pasted list under a name.
-        decksSpinner = android.widget.Spinner(this).apply { id = 4245 }
-        col.addView(LinearLayout(this).apply {
-            addView(decksSpinner, LinearLayout.LayoutParams(0, -2, 2f))
-            addView(Button(context).apply { text = "Save"; setOnClickListener { saveDeck() } }, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(Button(context).apply { text = "Delete"; setOnClickListener { deleteDeck() } }, LinearLayout.LayoutParams(0, -2, 1f))
-        })
-        input = EditText(this).apply {
-            id = 4242; hint = "4 Llanowar Elves (FDN) 227\n…"; minLines = 5; maxLines = 10; textSize = 13f; typeface = Typeface.MONOSPACE
+        decksSpinner = android.widget.Spinner(this).apply { id = 4245; background = rounded(surface2(), 14); setPadding(dp(8), dp(6), dp(8), dp(6)) }
+        input = field("4 Llanowar Elves (FDN) 227\n…").apply {
+            id = 4242; minLines = 5; maxLines = 10; textSize = 13f; typeface = Typeface.MONOSPACE; gravity = android.view.Gravity.TOP
+            isSingleLine = false
             setText(getSharedPreferences("coach", MODE_PRIVATE).getString("last_deck", ""))
         }
-        col.addView(input)
-        col.addView(LinearLayout(this).apply {
-            addView(Button(context).apply { text = "Paste"; setOnClickListener { paste() } }, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(Button(context).apply { text = "Check deck"; setOnClickListener { run() } }, LinearLayout.LayoutParams(0, -2, 1f))
-        })
-        out = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, pad, 0, 0) }
+        col.addView(card(
+            decksSpinner,
+            rowOf(tonalButton("Save deck") { saveDeck() }, tonalButton("Delete") { deleteDeck() }),
+            input,
+            rowOf(tonalButton("Paste") { paste() }, primaryButton("Check deck") { run() }),
+        ))
+        out = card().apply { visibility = android.view.View.GONE }
         col.addView(out)
-        setContentView(scroll)
+        setContentView(page(col))
         loadDeckList()
         if (input.text.isNotBlank()) run()
     }
@@ -117,6 +107,7 @@ class DeckCheckActivity : Activity() {
         val rarities = CardDb.load(this).associate { it.name.lowercase() to it.rarity }
         val r = DeckCheck.check(deckText, { owned[it.lowercase()]?.copies ?: 0 }, { owned[it.lowercase()]?.rarity ?: rarities[it.lowercase()] ?: "?" })
         out.removeAllViews()
+        out.visibility = android.view.View.VISIBLE
         if (r.lines.isEmpty()) { out.addView(TextView(this).apply { text = "No cards found. Paste a deck list with one card per line." }); return }
         val missing = r.total - r.owned
         out.addView(TextView(this).apply {
@@ -133,13 +124,13 @@ class DeckCheckActivity : Activity() {
         })
         val wild = r.wildcards.filter { it.value > 0 }
         if (wild.isNotEmpty()) out.addView(TextView(this).apply {
-            textSize = 15f; setPadding(0, (6 * dp).toInt(), 0, (10 * dp).toInt())
+            textSize = 15f; setPadding(0, (6 * density).toInt(), 0, (10 * density).toInt())
             text = "Wildcards needed: " + wild.entries.joinToString("  ·  ") { "${it.value} ${rarityName[it.key]}" } +
                 if ("?" in wild) "\n(Unknown rarity: card isn't in the Standard card list.)" else ""
         })
         for (l in r.lines) out.addView(LinearLayout(this).apply {
-            setPadding(0, (3 * dp).toInt(), 0, (3 * dp).toInt())
-            addView(TextView(context).apply { text = l.rarity; setTextColor(this@DeckCheckActivity.rarityColor(l.rarity)); typeface = Typeface.MONOSPACE; minWidth = (24 * dp).toInt() })
+            setPadding(0, (3 * density).toInt(), 0, (3 * density).toInt())
+            addView(TextView(context).apply { text = l.rarity; setTextColor(this@DeckCheckActivity.rarityColor(l.rarity)); typeface = Typeface.MONOSPACE; minWidth = (24 * density).toInt() })
             addView(TextView(context).apply { text = "${l.need} ${l.name}" + if (l.sideboard) "  (side)" else "" }, LinearLayout.LayoutParams(0, -2, 1f))
             addView(TextView(context).apply {
                 text = if (l.missing == 0) "owned" else "need ${l.missing}"

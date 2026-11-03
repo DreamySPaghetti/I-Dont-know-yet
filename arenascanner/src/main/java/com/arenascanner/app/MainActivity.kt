@@ -41,122 +41,123 @@ class MainActivity : Activity() {
     private lateinit var updateButton: Button
     private var query = ""
     private var rarityFilter: String? = null
-    private lateinit var autoScrollBox: android.widget.CheckBox
-    private val adapter = CardAdapter()
-    private val dp get() = resources.displayMetrics.density
+    private lateinit var autoScrollBox: android.widget.CompoundButton
+    private lateinit var listBox: LinearLayout
+    private val density get() = resources.displayMetrics.density
 
     companion object {
         private const val REQ_CAPTURE = 1
         private const val REQ_NOTIFY = 2
         private const val REQ_IMPORT = 3
+        private const val MAX_ROWS = 200
         private const val ARENA_PACKAGE = "com.wizards.mtga"
         private val RARITY_COLORS = mapOf("C" to "#3B3F46", "U" to "#6F8296", "R" to "#A8811C", "M" to "#C4471D", "?" to "#8A93A3")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val pad = (16 * dp).toInt()
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, 0) }
-        // Android 15 draws apps edge to edge, so pad the content clear of the status and navigation bars.
-        root.setOnApplyWindowInsetsListener { v, insets ->
-            val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-            v.setPadding(pad + bars.left, pad + bars.top, pad + bars.right, bars.bottom)
-            insets
-        }
-        val heading = TextView(this).apply {
-            text = "Arena Scanner"; textSize = 24f; setTypeface(typeface, Typeface.BOLD); setPadding(0, 0, 0, pad / 2)
-        }
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        status = TextView(this).apply { textSize = 14f }
-        updateButton = Button(this).apply {
-            visibility = View.GONE
-            setBackgroundColor(Color.parseColor("#1F7A4D")); setTextColor(Color.WHITE)
-            setOnClickListener { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Updates.APK_URL))) }
+        // Header
+        col.addView(titleText("Arena Scanner", 28f))
+        status = mutedText("").apply { setPadding(0, dp(2), 0, dp(12)) }
+        col.addView(status)
+        updateButton = primaryButton("Update available", GOOD) { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Updates.APK_URL))) }
+            .apply { visibility = View.GONE; layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) } }
+        col.addView(updateButton)
+
+        // Play
+        col.addView(card(
+            titleText("Play"),
+            mutedText("Get move suggestions during a game, or check what a deck is missing."),
+            primaryButton("Move coach", COACH) { startActivity(Intent(this, CoachActivity::class.java)) },
+            tonalButton("Deck check: what am I missing?") { startActivity(Intent(this, DeckCheckActivity::class.java)) },
+        ))
+
+        // Collection
+        scanButton = primaryButton("Start scanning") { toggleScan() }
+        autoScrollBox = switchRow("Auto-scroll while scanning", Gemma.prefs(this).getBoolean("auto_scroll", false)) { on ->
+            Gemma.prefs(this).edit().putBoolean("auto_scroll", on).apply()
+            if (on && AutoScroll.instance == null) explainAccessibility()
         }
-        dbButton = Button(this).apply { setOnClickListener { downloadCards() } }
-        scanButton = Button(this).apply { setOnClickListener { toggleScan() } }
-        val exportButton = Button(this).apply { text = "Export to collection page"; setOnClickListener { export() } }
-        val csvButton = Button(this).apply { text = "Save as CSV file"; setOnClickListener { saveCsv() } }
-        val clearButton = Button(this).apply { text = "Clear collection"; setOnClickListener { confirmClear() } }
-        val debugButton = Button(this).apply { text = "Save last scan image"; setOnClickListener { saveDebugImage() } }
-        val coachButton = Button(this).apply { text = "Move coach (Gemma, on-device)"; setOnClickListener { startActivity(Intent(this@MainActivity, CoachActivity::class.java)) } }
-        val help = TextView(this).apply {
-            visibility = View.GONE
-            textSize = 13f
-            setTextColor(context.secondaryText())
-            text = "How to scan: tap Start scanning and allow screen capture. In Arena, open Collection and scroll at a steady, moderate pace. " +
-                "It scans continuously as you scroll, reading each card's name and the 4 diamonds above it (filled = copies you own).\n\n" +
-                "Floating button: tap to pause or resume, long-press to stop, drag it to an empty spot so it doesn't cover cards. " +
-                "It shows +N when it finds new cards.\n\n" +
-                "A card is added once its diamonds have been read, so scroll past each card at least once. " +
-                "If a count is wrong, fix it with − and +. Scans never change a count you set yourself."
+        val help = mutedText(
+            "Open Collection in Arena after tapping Start scanning. Each card's name and the 4 diamonds above it " +
+            "(filled = copies you own) are read as you scroll.\n\n" +
+            "Floating button: tap to pause or resume, long-press to stop, drag to move it off the cards. " +
+            "Counts you set yourself are never changed by a scan."
+        ).apply { visibility = View.GONE }
+        val helpLink = mutedText("How scanning works ▸").apply {
+            setTextColor(Color.parseColor(PRIMARY))
+            setOnClickListener {
+                help.visibility = if (help.visibility == View.GONE) View.VISIBLE else View.GONE
+                text = if (help.visibility == View.GONE) "How scanning works ▸" else "How scanning works ▾"
+            }
         }
-        summary = TextView(this).apply { textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, pad / 2) }
-        val list = ListView(this).apply { adapter = this@MainActivity.adapter }
-        // Find a card fast: search by name and filter by rarity.
-        val search = android.widget.EditText(this).apply {
-            id = 4243; hint = "Search your cards"; isSingleLine = true
+        col.addView(card(
+            titleText("Collection"),
+            scanButton,
+            autoScrollBox,
+            rowOf(tonalButton("Save CSV") { saveCsv() }, tonalButton("Import CSV") {
+                @Suppress("DEPRECATION") startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_IMPORT)
+            }),
+            rowOf(tonalButton("Copy for web page") { export() }, tonalButton("Save scan image") { saveDebugImage() }),
+            helpLink, help,
+        ))
+
+        // Settings
+        dbButton = tonalButton("Update card list") { downloadCards() }
+        col.addView(card(
+            titleText("Settings"),
+            dbButton,
+            switchRow("Track all Arena cards (Historic, Alchemy, Brawl)", CardDb.pool(this) == "all") { on ->
+                Gemma.prefs(this).edit().putString("card_pool", if (on) "all" else "standard").apply()
+                toast(if (on) "Downloading every Arena card (about a minute)…" else "Switching back to Standard cards…")
+                downloadCards()
+            },
+            rowOf(tonalButton("About & privacy") { startActivity(Intent(this, AboutActivity::class.java)) },
+                pill("Clear all", surface2(), Color.parseColor("#C0392B")) { confirmClear() }),
+        ))
+
+        // Your cards
+        summary = mutedText("")
+        val search = field("Search your cards").apply {
+            id = 4243; isSingleLine = true
             addTextChangedListener(object : android.text.TextWatcher {
                 override fun afterTextChanged(s: android.text.Editable?) { query = s.toString().trim().lowercase(); refresh() }
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             })
         }
-        val rarity = android.widget.Spinner(this).apply {
-            id = 4244
-            adapter = android.widget.ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, listOf("All", "Mythic", "Rare", "Uncommon", "Common"))
-            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) { rarityFilter = listOf(null, "M", "R", "U", "C")[pos]; refresh() }
-                override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
-            }
-        }
-        val deckButton = Button(this).apply { text = "Deck check: what am I missing?"; setOnClickListener { startActivity(Intent(this@MainActivity, DeckCheckActivity::class.java)) } }
+        val rarityChips = chips(listOf("All", "Mythic", "Rare", "Uncommon", "Common"), 0) { i -> rarityFilter = listOf(null, "M", "R", "U", "C")[i]; refresh() }
+        listBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(card(titleText("Your cards"), summary, search, rarityChips, listBox))
 
-        fun section(t: String) = TextView(this).apply {
-            text = t.uppercase(); textSize = 12f; letterSpacing = 0.08f; setTextColor(Color.parseColor("#5B6678"))
-            setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, pad / 4)
+        setContentView(page(col))
+    }
+
+    /** One card row: rarity pill, name (tap for details), and a − count + stepper. */
+    private fun cardRow(o: Owned): View = LinearLayout(this).apply {
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(0, dp(6), 0, dp(6))
+        val rc = rarityColor(o.rarity)
+        addView(TextView(context).apply {
+            text = o.rarity; textSize = 12f; gravity = Gravity.CENTER; setTextColor(rc)
+            setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
+            background = rounded(Color.argb(40, Color.red(rc), Color.green(rc), Color.blue(rc)), 8)
+        }, LinearLayout.LayoutParams(dp(28), dp(24)))
+        addView(bodyText(o.name, 15f).apply {
+            setPadding(dp(10), 0, dp(8), 0)
+            setOnClickListener { showCard(o) }
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        fun step(label: String, enabled: Boolean, onClick: () -> Unit) = TextView(context).apply {
+            text = label; textSize = 18f; gravity = Gravity.CENTER; setTextColor(if (enabled) onSurface() else muted())
+            background = rounded(surface2(), 18); isEnabled = enabled; setOnClickListener { onClick() }
         }
-        fun row(vararg b: View) = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            for (v in b) addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        }
-        coachButton.apply { textSize = 16f; setBackgroundColor(Color.parseColor("#6A3FB5")); setTextColor(Color.WHITE) }
-        scanButton.apply { textSize = 16f; setBackgroundColor(Color.parseColor("#2A63B0")); setTextColor(Color.WHITE) }
-        exportButton.text = "Copy for web page"
-        csvButton.text = "Save CSV"
-        clearButton.text = "Clear all"
-        debugButton.text = "Save scan image"
-        autoScrollBox = android.widget.CheckBox(this).apply {
-            text = "Auto-scroll the collection while scanning"
-            isChecked = Gemma.prefs(context).getBoolean("auto_scroll", false)
-            setOnCheckedChangeListener { _, on ->
-                Gemma.prefs(context).edit().putBoolean("auto_scroll", on).apply()
-                if (on && AutoScroll.instance == null) explainAccessibility()
-            }
-        }
-        val importButton = Button(this).apply { text = "Import CSV"; setOnClickListener {
-            @Suppress("DEPRECATION") startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_IMPORT)
-        } }
-        val aboutButton = Button(this).apply { text = "About & privacy"; setOnClickListener { startActivity(Intent(this@MainActivity, AboutActivity::class.java)) } }
-        val poolBox = android.widget.CheckBox(this).apply {
-            text = "Track all Arena cards (Historic, Alchemy, Brawl), not just Standard"
-            isChecked = CardDb.pool(context) == "all"
-            setOnCheckedChangeListener { _, on ->
-                Gemma.prefs(context).edit().putString("card_pool", if (on) "all" else "standard").apply()
-                toast(if (on) "Downloading every Arena card (about a minute)…" else "Switching back to Standard cards…")
-                downloadCards()
-            }
-        }
-        val helpToggle = Button(this).apply {
-            text = "How to scan ▸"
-            setOnClickListener { help.visibility = if (help.visibility == View.GONE) View.VISIBLE else View.GONE
-                text = if (help.visibility == View.GONE) "How to scan ▸" else "How to scan ▾" }
-        }
-        for (v in listOf(heading, status, updateButton, section("Play"), coachButton, deckButton, section("Collection"), scanButton, autoScrollBox,
-            row(exportButton, csvButton), section("More"), row(dbButton, helpToggle), poolBox, row(clearButton, debugButton), row(importButton, aboutButton), help, summary, row(search, rarity))) root.addView(v)
-        root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        setContentView(root)
-        title = "Arena Scanner"
+        addView(step("−", true) { CollectionStore.setCopies(this@MainActivity, o.name, o.copies - 1); refresh() }, LinearLayout.LayoutParams(dp(36), dp(36)))
+        addView(TextView(context).apply {
+            text = o.copies.toString(); textSize = 15f; gravity = Gravity.CENTER; setTextColor(onSurface()); typeface = Typeface.MONOSPACE
+        }, LinearLayout.LayoutParams(dp(32), -2))
+        addView(step("+", o.copies < 4) { CollectionStore.setCopies(this@MainActivity, o.name, o.copies + 1); refresh() }, LinearLayout.LayoutParams(dp(36), dp(36)))
     }
 
     override fun onResume() {
@@ -167,7 +168,7 @@ class MainActivity : Activity() {
         io.execute {
             val newer = runCatching { Updates.check(this) }.getOrNull()
             if (newer != null) runOnUiThread {
-                updateButton.text = "Update available (build $newer): tap to download, then open it to install"
+                updateButton.text = "Update available (build $newer) · tap to download"
                 updateButton.visibility = View.VISIBLE
             }
         }
@@ -183,16 +184,17 @@ class MainActivity : Activity() {
         }
         dbButton.text = if (ready) "Update card list" else "Download card list"
         scanButton.text = if (ScanService.running && !ScanService.coaching) "Stop scanning" else "Start scanning"
-        if (autoScrollBox.isChecked && AutoScroll.instance == null) autoScrollBox.text = "Auto-scroll (needs Accessibility: tap to set up)"
-        else autoScrollBox.text = "Auto-scroll the collection while scanning"
+        autoScrollBox.text = if (autoScrollBox.isChecked && AutoScroll.instance == null) "Auto-scroll (needs Accessibility setup)" else "Auto-scroll while scanning"
         val all = CollectionStore.all(this)
-        adapter.items = all.filter { (query.isEmpty() || query in it.name.lowercase()) && (rarityFilter == null || it.rarity == rarityFilter) }
-        adapter.notifyDataSetChanged()
+        val shown = all.filter { (query.isEmpty() || query in it.name.lowercase()) && (rarityFilter == null || it.rarity == rarityFilter) }
+        // Rows are plain views; cap them so a big collection stays quick (search narrows the rest).
+        listBox.removeAllViews()
+        for (o in shown.take(MAX_ROWS)) listBox.addView(cardRow(o))
+        if (shown.size > MAX_ROWS) listBox.addView(mutedText("Showing $MAX_ROWS of ${shown.size}. Search to find the rest.").apply { setPadding(0, dp(8), 0, 0) })
         val by = all.groupingBy { it.rarity }.eachCount()
         summary.text = if (all.isEmpty()) "No cards yet. Tap Start scanning, then open Collection in MTG Arena." else
-            "Your collection: ${all.size} cards, ${all.sumOf { it.copies }} copies\n" +
-            "Mythic ${by["M"] ?: 0} · Rare ${by["R"] ?: 0} · Uncommon ${by["U"] ?: 0} · Common ${by["C"] ?: 0}" +
-            if (adapter.items.size != all.size) "\nShowing ${adapter.items.size}" else ""
+            "${all.size} cards · ${all.sumOf { it.copies }} copies\n" +
+            "Mythic ${by["M"] ?: 0} · Rare ${by["R"] ?: 0} · Uncommon ${by["U"] ?: 0} · Common ${by["C"] ?: 0}"
     }
 
     private var downloading = false
@@ -372,7 +374,7 @@ class MainActivity : Activity() {
     /** Card details: rules text from the card list, and a quick way to set how many you own. */
     private fun showCard(o: Owned) {
         val rules = CardDb.load(this).firstOrNull { it.name == o.name }?.rules?.replace(" — ", "\n")
-        val pad = (20 * dp).toInt()
+        val pad = (20 * density).toInt()
         var dialog: AlertDialog? = null
         val body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0)
@@ -407,44 +409,4 @@ class MainActivity : Activity() {
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
-
-    private inner class CardAdapter : BaseAdapter() {
-        var items: List<Owned> = emptyList()
-        override fun getCount() = items.size
-        override fun getItem(position: Int) = items[position]
-        override fun getItemId(position: Int) = position.toLong()
-
-        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
-            val row = (convertView as? LinearLayout) ?: makeRow()
-            val o = items[position]
-            val badge = row.getChildAt(0) as TextView
-            val name = row.getChildAt(1) as TextView
-            val minus = row.getChildAt(2) as Button
-            val count = row.getChildAt(3) as TextView
-            val plus = row.getChildAt(4) as Button
-            badge.text = o.rarity
-            badge.setTextColor(rarityColor(o.rarity))
-            name.text = o.name
-            name.setOnClickListener { showCard(o) }
-            count.text = o.copies.toString()
-            minus.setOnClickListener { CollectionStore.setCopies(this@MainActivity, o.name, o.copies - 1); refresh() }
-            plus.setOnClickListener { CollectionStore.setCopies(this@MainActivity, o.name, o.copies + 1); refresh() }
-            plus.isEnabled = o.copies < 4
-            return row
-        }
-
-        private fun makeRow(): LinearLayout {
-            val p = (8 * dp).toInt()
-            return LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, p / 2, 0, p / 2)
-                addView(TextView(context).apply { textSize = 14f; setTypeface(Typeface.MONOSPACE, Typeface.BOLD); minWidth = (28 * dp).toInt() })
-                addView(TextView(context).apply { textSize = 15f }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                addView(Button(context).apply { text = "−"; minWidth = 0; minimumWidth = (44 * dp).toInt() })
-                addView(TextView(context).apply { textSize = 15f; gravity = Gravity.CENTER; minWidth = (28 * dp).toInt(); typeface = Typeface.MONOSPACE })
-                addView(Button(context).apply { text = "+"; minWidth = 0; minimumWidth = (44 * dp).toInt() })
-            }
-        }
-    }
 }
