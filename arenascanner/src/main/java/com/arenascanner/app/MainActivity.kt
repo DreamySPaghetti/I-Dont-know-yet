@@ -69,6 +69,7 @@ class MainActivity : Activity() {
         val csvButton = Button(this).apply { text = "Save as CSV file"; setOnClickListener { saveCsv() } }
         val clearButton = Button(this).apply { text = "Clear collection"; setOnClickListener { confirmClear() } }
         val debugButton = Button(this).apply { text = "Save last scan image"; setOnClickListener { saveDebugImage() } }
+        val coachButton = Button(this).apply { text = "Move coach (Gemma, on-device)"; setOnClickListener { startActivity(Intent(this@MainActivity, CoachActivity::class.java)) } }
         val help = TextView(this).apply {
             textSize = 13f
             setTextColor(Color.DKGRAY)
@@ -82,7 +83,7 @@ class MainActivity : Activity() {
         summary = TextView(this).apply { textSize = 15f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, pad / 2) }
         val list = ListView(this).apply { adapter = this@MainActivity.adapter }
 
-        for (v in listOf(heading, status, dbButton, scanButton, exportButton, csvButton, clearButton, debugButton, help, summary)) root.addView(v)
+        for (v in listOf(heading, status, coachButton, dbButton, scanButton, exportButton, csvButton, clearButton, debugButton, help, summary)) root.addView(v)
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         title = "Arena Scanner"
@@ -99,7 +100,7 @@ class MainActivity : Activity() {
         val ready = CardDb.isReady(this)
         if (ready && status.text.isNullOrEmpty()) status.text = "Card list ready."
         dbButton.text = if (ready) "Update card list (after a new set)" else "Download card list"
-        scanButton.text = if (ScanService.running) "Stop scanning" else "Start scanning"
+        scanButton.text = if (ScanService.running && !ScanService.coaching) "Stop scanning" else "Start scanning"
         adapter.items = CollectionStore.all(this)
         adapter.notifyDataSetChanged()
         val copies = adapter.items.sumOf { it.copies }
@@ -128,6 +129,7 @@ class MainActivity : Activity() {
     }
 
     private fun toggleScan() {
+        if (ScanService.running && ScanService.coaching) { toast("The move coach is on. Turn it off first (long-press the Coach button)."); return }
         if (ScanService.running) {
             startService(Intent(this, ScanService::class.java).setAction(ScanService.ACTION_STOP))
             scanButton.postDelayed({ refresh() }, 300)

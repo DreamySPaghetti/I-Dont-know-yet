@@ -29,7 +29,8 @@ object CardDb {
             val o = arr.getJSONObject(it)
             val faces = o.optJSONArray("faces")
             Card(o.getString("name"), o.getString("rarity"),
-                if (faces == null) emptyList() else (0 until faces.length()).map(faces::getString))
+                if (faces == null) emptyList() else (0 until faces.length()).map(faces::getString),
+                o.optString("rules"))
         }
         cached = list
         return list
@@ -50,7 +51,7 @@ object CardDb {
             if (url != null) Thread.sleep(600)
         }
         val arr = JSONArray()
-        for (c in out) arr.put(JSONObject().put("name", c.name).put("rarity", c.rarity).put("faces", JSONArray(c.faces)))
+        for (c in out) arr.put(JSONObject().put("name", c.name).put("rarity", c.rarity).put("faces", JSONArray(c.faces)).put("rules", c.rules))
         file(ctx).writeText(arr.toString())
         cached = out
         return out
@@ -62,7 +63,27 @@ object CardDb {
             ?: emptyList()
         // Arena lists double-faced cards by their front face.
         val name = if (faces.isNotEmpty()) faces[0] else full
-        return Card(name, rarityCode(o.optString("rarity")), faces)
+        return Card(name, rarityCode(o.optString("rarity")), faces, rulesOf(o))
+    }
+
+    /** True once the saved list includes rules text (lists saved before the coach existed don't). */
+    fun hasRules(ctx: Context) = load(ctx).any { it.rules.isNotEmpty() }
+
+    /** "{1}{W} — Creature — Cat — Lifelink — 2/2"; double-faced cards list each face, separated by " // ". */
+    private fun rulesOf(o: JSONObject): String {
+        val faces = o.optJSONArray("card_faces")
+        if (faces != null && o.optString("oracle_text").isEmpty())
+            return (0 until faces.length()).joinToString(" // ") { faceRules(faces.getJSONObject(it), withName = true) }
+        return faceRules(o, withName = false)
+    }
+
+    private fun faceRules(f: JSONObject, withName: Boolean): String {
+        val parts = mutableListOf<String>()
+        if (withName) parts += f.optString("name")
+        for (k in listOf("mana_cost", "type_line", "oracle_text")) f.optString(k).takeIf { it.isNotEmpty() }?.let { parts += it.replace('\n', ' ') }
+        if (f.has("power")) parts += "${f.optString("power")}/${f.optString("toughness")}"
+        if (f.has("loyalty")) parts += "Loyalty ${f.optString("loyalty")}"
+        return parts.joinToString(" — ")
     }
 
     fun rarityCode(r: String) = when (r) {

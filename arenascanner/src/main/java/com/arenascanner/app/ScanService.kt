@@ -43,12 +43,18 @@ import java.util.concurrent.Executors
  * finishes, the next frame is read if the screen has changed. Each scan reads the card names with
  * ML Kit, counts the copy pips under each card, and records them.
  * The floating button pauses/resumes (tap) or stops (long-press).
+ *
+ * In coach mode ([MODE_COACH]) it doesn't scan. Tapping the floating "Coach" button captures the
+ * current Arena screen, reads the visible card names, and asks Gemma (on the phone) for the best play.
  */
 class ScanService : Service() {
     companion object {
         const val EXTRA_CODE = "code"
         const val EXTRA_DATA = "data"
         const val ACTION_STOP = "stop"
+        const val EXTRA_MODE = "mode"
+        const val MODE_COACH = "coach"
+        @Volatile var coaching = false
         private const val CHANNEL = "scan"
         private const val TICK_MS = 120L
         @Volatile var running = false
@@ -81,11 +87,20 @@ class ScanService : Service() {
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
     private val matcher by lazy { Matcher(CardDb.load(this)) }
 
+    // --- coach mode ---
+    private var coachMode = false
+    private var gemma: Gemma? = null
+    private val coachExec = Executors.newSingleThreadExecutor()
+    @Volatile private var coachReady = false
+    @Volatile private var coachBusy = false
+    private var panel: TextView? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) { stopSelf(); return START_NOT_STICKY }
         if (projection != null) return START_NOT_STICKY
+        coachMode = intent?.getStringExtra(EXTRA_MODE) == MODE_COACH
         startForeground(1, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         val code = intent?.getIntExtra(EXTRA_CODE, 0) ?: 0
         val data: Intent? = if (Build.VERSION.SDK_INT >= 33) intent?.getParcelableExtra(EXTRA_DATA, Intent::class.java)
@@ -94,7 +109,7 @@ class ScanService : Service() {
         startCapture(code, data)
         showOverlay()
         running = true
-        bg.postDelayed(::tick, 1500)
+        if (coachMode) startCoach() else bg.postDelayed(::tick, 1500)
         return START_NOT_STICKY
     }
 
@@ -274,7 +289,7 @@ class ScanService : Service() {
         val wm = getSystemService(WindowManager::class.java)
         val d = resources.displayMetrics.density
         val btn = TextView(this).apply {
-            text = "Auto"
+            text = if (coachMode) "Loading" else "Auto"
             textSize = 14f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
@@ -303,6 +318,7 @@ class ScanService : Service() {
                 }
                 MotionEvent.ACTION_UP -> if (!moved) {
                     if (e.eventTime - downAt > 600) stopSelf()
+                    else if (coachMode) coachTap()
                     else { paused = !paused; style(btn); btn.text = if (paused) "Paused" else "Auto" }
                 }
             }
@@ -317,7 +333,7 @@ class ScanService : Service() {
         val d = resources.displayMetrics.density
         btn.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(Color.parseColor(if (paused) "#CC5B6678" else "#E62A63B0"))
+            setColor(Color.parseColor(when { coachMode -> "#E66A3FB5"; paused -> "#CC5B6678"; else -> "#E62A63B0" }))
             setStroke((2 * d).toInt(), Color.WHITE)
         }
     }
@@ -327,7 +343,117 @@ class ScanService : Service() {
         val btn = overlay ?: return
         btn.text = label
         main.removeCallbacksAndMessages("flash")
-        main.postAtTime({ btn.text = if (paused) "Paused" else "Auto" }, "flash", android.os.SystemClock.uptimeMillis() + hold)
+        main.postAtTime({ btn.text = idleLabel() }, "flash", android.os.SystemClock.uptimeMillis() + hold)
+    }
+
+    private fun idleLabel() = when {
+        coachMode && !coachReady -> "Loading"
+        coachMode -> "Coach"
+        paused -> "Paused"
+        else -> "Auto"
+    }
+
+    // ---------------------------------------------------------------- coach mode
+
+    /** Loads Gemma in the background; the button says "Loading" until it's ready (about 10 s). */
+    private fun startCoach() {
+        coaching = true
+        coachExec.execute {
+            try {
+                val g = Gemma(this)
+                g.load()
+                gemma = g
+                coachReady = true
+                main.post { overlay?.text = "Coach"; showPanel("Coach ready (${g.backendName}). On your turn, tap Coach.") }
+            } catch (t: Throwable) {
+                main.post { showPanel("Couldn't start Gemma: ${t.message}\nLong-press the button to close."); overlay?.text = "Error" }
+            }
+        }
+    }
+
+    /** Coach button tapped: hide the overlay, grab a clean frame, read it, ask Gemma. */
+    private fun coachTap() {
+        if (!coachReady) { showPanel("Still loading the model…"); return }
+        if (coachBusy) return
+        coachBusy = true
+        overlay?.visibility = android.view.View.INVISIBLE
+        panel?.visibility = android.view.View.INVISIBLE
+        // Wait for a frame captured after the overlay disappeared.
+        bg.postDelayed({
+            val img = latest
+            val bmp = img?.let { toBitmap(it) }
+            main.post {
+                overlay?.visibility = android.view.View.VISIBLE
+                if (bmp == null) { showPanel("Couldn't capture the screen. Try again."); coachBusy = false; return@post }
+                showPanel("Reading the board…")
+                readBoard(bmp)
+            }
+        }, 350)
+    }
+
+    private fun readBoard(bmp: Bitmap) {
+        recognizer.process(InputImage.fromBitmap(bmp, 0))
+            .addOnSuccessListener { text ->
+                val lines = text.textBlocks.flatMap { b -> b.lines.map { it.text } }
+                val cards = lines.mapNotNull { matcher.match(it) }
+                val matched = cards.map { Matcher.normalize(it.name) }.toSet()
+                val other = lines.filter { Matcher.normalize(it) !in matched }
+                val prompt = CoachPrompt.build(cards, other)
+                val image = jpeg(bmp, 1024)
+                showPanel("Thinking… (${cards.distinctBy { it.name }.size} cards read)")
+                coachExec.execute { askGemma(image, prompt) }
+            }
+            .addOnFailureListener { showPanel("Couldn't read the screen: ${it.message}"); coachBusy = false }
+    }
+
+    private fun askGemma(image: ByteArray, prompt: String) {
+        val g = gemma ?: run { main.post { coachBusy = false }; return }
+        val started = System.currentTimeMillis()
+        g.ask(image, prompt,
+            onText = { t -> main.post { showPanel(t.trim()) } },
+            onDone = {
+                val secs = (System.currentTimeMillis() - started) / 1000
+                main.post { panel?.let { it.text = "${it.text}\n\n(${secs}s · tap to close)" }; coachBusy = false }
+            },
+            onError = { t -> main.post { showPanel("Gemma error: ${t.message}"); coachBusy = false } })
+    }
+
+    /** Screenshot scaled to [maxW] pixels wide as JPEG, small enough for the model's image input. */
+    private fun jpeg(bmp: Bitmap, maxW: Int): ByteArray {
+        val scaled = if (bmp.width <= maxW) bmp
+            else Bitmap.createScaledBitmap(bmp, maxW, (bmp.height.toLong() * maxW / bmp.width).toInt(), true)
+        val out = java.io.ByteArrayOutputStream()
+        scaled.compress(Bitmap.CompressFormat.JPEG, 90, out)
+        return out.toByteArray()
+    }
+
+    /** Advice panel at the top centre of the screen; tap it to hide. */
+    private fun showPanel(text: String) {
+        val wm = getSystemService(WindowManager::class.java)
+        val d = resources.displayMetrics.density
+        val p = panel ?: TextView(this).apply {
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            val pad = (12 * d).toInt()
+            setPadding(pad, pad, pad, pad)
+            background = GradientDrawable().apply {
+                cornerRadius = 12 * d
+                setColor(Color.parseColor("#E61B1530"))
+                setStroke((1 * d).toInt(), Color.parseColor("#806A3FB5"))
+            }
+            setOnClickListener { visibility = android.view.View.GONE }
+        }.also { tv ->
+            val lp = WindowManager.LayoutParams(
+                (minOf(width, height) * 1.1).toInt().coerceAtMost((width * 0.6).toInt()),
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT
+            ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = (8 * d).toInt() }
+            wm.addView(tv, lp)
+            panel = tv
+        }
+        p.text = text
+        p.visibility = android.view.View.VISIBLE
     }
 
     private fun toBitmap(img: Image): Bitmap {
@@ -356,8 +482,9 @@ class ScanService : Service() {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_search)
-            .setContentTitle("Arena Scanner is reading your screen")
-            .setContentText("Scroll through your collection; it scans as you go. Tap the button to pause.")
+            .setContentTitle(if (coachMode) "Move coach is on" else "Arena Scanner is reading your screen")
+            .setContentText(if (coachMode) "On your turn, tap the Coach button. Long-press it to stop."
+                else "Scroll through your collection; it scans as you go. Tap the button to pause.")
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, "Stop", stop).build())
             .setOngoing(true)
@@ -366,8 +493,13 @@ class ScanService : Service() {
 
     override fun onDestroy() {
         running = false
+        coaching = false
         overlay?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
         overlay = null
+        panel?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
+        panel = null
+        coachExec.execute { gemma?.close(); gemma = null }
+        coachExec.shutdown()
         display?.release()
         projection?.stop()
         if (::bg.isInitialized) bg.post { latest?.close(); latest = null; reader?.close(); bgThread.quitSafely() }
