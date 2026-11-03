@@ -106,6 +106,8 @@ object CoachPrompt {
         /** Untapped lands I control (mana available now), when tapped/untapped could be read. */
         val untappedLands: Int? = null,
         val totalLands: Int? = null,
+        /** Where each card's name was seen (screen fractions), for pointing at the suggested card. */
+        val where: Map<String, Pair<Float, Float>> = emptyMap(),
     )
 
     enum class Phase(val note: String, val question: String) {
@@ -180,6 +182,7 @@ object CoachPrompt {
         var measured = false
         val ptSeen = mutableListOf<Pair<Seen, Zone>>()
         var myLands = 0
+        val where = linkedMapOf<String, Pair<Float, Float>>()
         var myUntapped = 0
         val cardSeen = mutableListOf<Triple<Card, Seen, Zone>>()
         val handH = lines.filter { it.cy > 0.6f && (Matcher.normalize(it.text) in BASIC || match(it.text.trim()) != null) }
@@ -216,6 +219,7 @@ object CoachPrompt {
                     val c = if ("basic land" in norm) null else match(t)
                     if (c != null) {
                         cards += c to zone
+                        if (c.name !in where || zone == Zone.HAND) where[c.name] = s.cx to s.cy
                         if (zone == Zone.MINE || zone == Zone.THEIRS) cardSeen += Triple(c, s, zone)
                         if (zone == Zone.MINE && isLand(c)) { myLands++; if (!s.tapped) myUntapped++ }
                     } else other += t
@@ -239,7 +243,7 @@ object CoachPrompt {
         }
         return Board(cards, lands, creatures, lifeYou, lifeOpp, phase, other,
             if (measured) playable else null, notPlayable - playable, fighters,
-            if (myLands > 0 && lines.any { it.angle != 0f }) myUntapped else null, if (myLands > 0) myLands else null)
+            if (myLands > 0 && lines.any { it.angle != 0f }) myUntapped else null, if (myLands > 0) myLands else null, where)
     }
 
     /**
@@ -404,6 +408,16 @@ object CoachPrompt {
             }
         }
         else -> null
+    }
+
+    /** The card the answer's PLAY line names first (earliest mention), with where it is on screen. */
+    fun target(answer: String, b: Board): Pair<String, Pair<Float, Float>>? {
+        val play = Regex("PLAY:(.*)", RegexOption.IGNORE_CASE).find(answer)?.groupValues?.get(1)?.lowercase() ?: return null
+        return b.where.entries
+            .map { (n, p) -> Triple(n, p, play.indexOf(n.lowercase())) }
+            .filter { it.third >= 0 }
+            .minByOrNull { it.third }
+            ?.let { it.first to it.second }
     }
 
     /** Second try after [check] found problems: same board, plus what was wrong with the first answer. */

@@ -198,6 +198,14 @@ class CoachPromptTest {
         assertTrue(CoachPrompt.check("PLAY: Cast Murder on the attacker.", b).isEmpty())
     }
 
+    @Test fun pointsAtTheFirstCardInPlay() {
+        val b = CoachPrompt.analyze(blockScreen, match)
+        val t = CoachPrompt.target("PLAY: Block the 2/2 with Veteran Survivor, keep Seam Rip.\nWHY: x", b)!!
+        assertEquals("Veteran Survivor", t.first)
+        assertEquals(0.48f to 0.49f, t.second)
+        assertEquals(null, CoachPrompt.target("PLAY: No blocks.", b))
+    }
+
     @Test fun attackMath() {
         val b = CoachPrompt.Board(emptyList(), emptyMap(), mapOf(Zone.MINE to listOf("5/3", "1/1"), Zone.THEIRS to listOf("2/2", "0/5")),
             null, null, CoachPrompt.Phase.ATTACK, emptyList())

@@ -566,6 +566,7 @@ class ScanService : Service() {
                     panel?.let { it.text = styled("$lastAnswer$warn\n\n(${secs}s${if (used) " · used your past lessons" else ""}$fixed · saved to match log)") }
                     actions?.visibility = android.view.View.VISIBLE
                     coachBusy = false
+                    if (warnings.isEmpty()) b?.let { CoachPrompt.target(lastAnswer, it) }?.let { (_, at) -> pointAt(at.first, at.second) }
                 }
             },
             onError = { t -> main.post { showPanel("Gemma error: ${t.message}"); coachBusy = false } })
@@ -578,6 +579,33 @@ class ScanService : Service() {
         val out = java.io.ByteArrayOutputStream()
         scaled.compress(Bitmap.CompressFormat.JPEG, 90, out)
         return out.toByteArray()
+    }
+
+    private var pointer: android.view.View? = null
+
+    /** Pulsing outline around the suggested card for 6 s; touches pass straight through to Arena. */
+    private fun pointAt(fx: Float, fy: Float) {
+        val wm = getSystemService(WindowManager::class.java)
+        pointer?.let { runCatching { wm.removeView(it) } }
+        val d = resources.displayMetrics.density
+        val bw = (width * 0.12f).toInt(); val bh = (height * 0.12f).toInt()
+        val v = android.view.View(this).apply {
+            background = GradientDrawable().apply { cornerRadius = 10 * d; setColor(Color.TRANSPARENT); setStroke((4 * d).toInt(), Color.parseColor("#FFD36B")) }
+        }
+        val lp = WindowManager.LayoutParams(bw, bh, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT).apply {
+            gravity = Gravity.TOP or Gravity.START
+            // The name is at the top of the card, so the box sits a little below it.
+            x = (fx * width - bw / 2f).toInt(); y = (fy * height - bh * 0.3f).toInt()
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        }
+        runCatching { wm.addView(v, lp) }.onFailure { return }
+        pointer = v
+        val pulse = android.animation.ObjectAnimator.ofFloat(v, "alpha", 1f, 0.25f).apply {
+            duration = 500; repeatCount = 11; repeatMode = android.animation.ValueAnimator.REVERSE; start()
+        }
+        main.postDelayed({ pulse.cancel(); runCatching { wm.removeView(v) }; if (pointer === v) pointer = null }, 6000)
     }
 
     /** Bold, coloured "PLAY:" / "WHY:" labels so the answer is quick to scan. */
@@ -760,6 +788,7 @@ class ScanService : Service() {
         overlay = null
         panelBox?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
         fixBox?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
+        pointer?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
         panel = null
         coachExec.execute { gemma?.close(); gemma = null }
         coachExec.shutdown()
