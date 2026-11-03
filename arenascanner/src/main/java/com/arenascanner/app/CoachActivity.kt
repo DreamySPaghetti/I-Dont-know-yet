@@ -412,10 +412,10 @@ class CoachActivity : Activity() {
             try {
                 val bmp = contentResolver.openInputStream(uri)!!.use { android.graphics.BitmapFactory.decodeStream(it) }
                     .copy(android.graphics.Bitmap.Config.ARGB_8888, false)
-                val text = com.google.android.gms.tasks.Tasks.await(
+                val ocr = com.google.android.gms.tasks.Tasks.await(
                     com.google.mlkit.vision.text.TextRecognition.getClient(com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS)
                         .process(com.google.mlkit.vision.common.InputImage.fromBitmap(bmp, 0)))
-                val board = BoardReader.board(text, bmp, Matcher(CardDb.load(this)))
+                val board = BoardReader.board(ocr, bmp, Matcher(CardDb.load(this)))
                 val prompt = BoardReader.prompt(this, board)
                 val g = testGemma ?: run {
                     runOnUiThread { testBtn.text = "Loading Gemma (first time ~10-20 s)…" }
