@@ -34,4 +34,10 @@ class CoachPromptTest {
         assertTrue(p.endsWith("PLAY: ...\nWHY: ..."))
         assertTrue(CoachPrompt.SYSTEM.contains("PLAY:") && CoachPrompt.SYSTEM.contains("WHY:"))
     }
+
+    @Test fun mulliganScreenAsksKeepOrMulligan() {
+        val p = CoachPrompt.build(listOf(elves), listOf("Mulligan", "Keep 7", "You will return 1 card"))
+        assertTrue(p.contains("keep it or mulligan"))
+        assertTrue(p.endsWith("PLAY: KEEP or MULLIGAN\nWHY: ..."))
+    }
 }

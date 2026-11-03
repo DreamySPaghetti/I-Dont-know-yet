@@ -14,6 +14,9 @@ object CoachPrompt {
         "Answer in exactly two short lines:\n" +
         "PLAY: one or two sentences.\n" +
         "WHY: one or two sentences.\n" +
+        "If the screen shows the opening-hand choice (Mulligan / Keep buttons), answer instead:\n" +
+        "PLAY: KEEP or MULLIGAN.\n" +
+        "WHY: count the lands and spells and say whether the hand can cast spells on curve.\n" +
         "If it is not the player's turn or the screen is unclear, say so in one line instead."
 
     /**
@@ -37,7 +40,10 @@ object CoachPrompt {
         }
         val other = otherText.map { it.trim() }.filter { it.length in 1..40 }.distinct().joinToString(" | ").take(500)
         if (other.isNotEmpty()) sb.append("Other text on screen (life totals, mana, phase, buttons): ").append(other).append("\n\n")
-        sb.append("What is my best play this turn? Answer in exactly this format:\nPLAY: ...\nWHY: ...")
+        val mulligan = otherText.any { it.contains("Mulligan", ignoreCase = true) } &&
+            otherText.any { it.trim().startsWith("Keep", ignoreCase = true) }
+        if (mulligan) sb.append("This is my opening hand. Should I keep it or mulligan? Answer in exactly this format:\nPLAY: KEEP or MULLIGAN\nWHY: ...")
+        else sb.append("What is my best play this turn? Answer in exactly this format:\nPLAY: ...\nWHY: ...")
         return sb.toString()
     }
 }
