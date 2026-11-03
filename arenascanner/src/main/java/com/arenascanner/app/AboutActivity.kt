@@ -20,7 +20,7 @@ class AboutActivity : Activity() {
             val b = i.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()); v.setPadding(b.left, b.top, b.right, b.bottom); i
         }
         fun h(t: String) = TextView(this).apply { text = t; textSize = 17f; setTypeface(typeface, Typeface.BOLD); setPadding(0, pad, 0, pad / 4) }
-        fun p(t: String) = TextView(this).apply { text = t; textSize = 14f; setTextColor(Color.DKGRAY); setLineSpacing(0f, 1.15f) }
+        fun p(t: String) = TextView(this).apply { text = t; textSize = 14f; setTextColor(context.secondaryText()); setLineSpacing(0f, 1.15f) }
         val version = packageManager.getPackageInfo(packageName, 0).versionName
         col.addView(TextView(this).apply { text = "Arena Scanner"; textSize = 24f; setTypeface(typeface, Typeface.BOLD) })
         col.addView(p("Version $version"))

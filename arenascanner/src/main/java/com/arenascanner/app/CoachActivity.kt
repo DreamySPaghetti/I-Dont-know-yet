@@ -65,7 +65,7 @@ class CoachActivity : Activity() {
         }
         col.addView(label("Move coach", 24f, true))
         col.addView(label("On your turn, tap the floating Coach button. It reads the board and asks Gemma 4 E2B, " +
-            "running on your phone, for the best play. Nothing is sent online.").apply { setTextColor(Color.DKGRAY) })
+            "running on your phone, for the best play. Nothing is sent online.").apply { setTextColor(context.secondaryText()) })
 
         step1 = label("", 16f, true); col.addView(step1)
         modelStatus = label("")
@@ -79,6 +79,15 @@ class CoachActivity : Activity() {
         col.addView(rulesStatus); col.addView(rulesBtn)
 
         step3 = label("", 16f, true); col.addView(step3)
+        col.addView(android.widget.RadioGroup(this).apply {
+            orientation = android.widget.RadioGroup.HORIZONTAL
+            addView(TextView(context).apply { text = "Advice text: " })
+            val cur = Gemma.prefs(context).getFloat("panel_text", 15f)
+            for ((label, size) in listOf("Small" to 13f, "Medium" to 15f, "Large" to 18f)) addView(android.widget.RadioButton(context).apply {
+                text = label; id = size.toInt() + 5000; isChecked = cur == size
+                setOnClickListener { Gemma.prefs(context).edit().putFloat("panel_text", size).apply() }
+            })
+        })
         col.addView(android.widget.CheckBox(this).apply {
             text = "Auto advice: ask by itself at my main phase, attacks, blocks and mulligan"
             isChecked = Gemma.prefs(context).getBoolean("auto_advice", true)
@@ -120,7 +129,7 @@ class CoachActivity : Activity() {
             "• The model uses about 3 GB of memory alongside Arena. If Arena or the coach closes unexpectedly, " +
             "close other apps first.\n" +
             "• Wizards' rules on live play assistance in ranked games are your call to check."
-        ).apply { setTextColor(Color.DKGRAY); textSize = 13f })
+        ).apply { setTextColor(context.secondaryText()); textSize = 13f })
         setContentView(scroll)
         title = "Move coach"
     }

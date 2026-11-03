@@ -31,7 +31,7 @@ class DeckCheckActivity : Activity() {
         col.addView(TextView(this).apply { text = "Deck check"; textSize = 24f; setTypeface(typeface, Typeface.BOLD) })
         col.addView(TextView(this).apply {
             text = "In Arena open a deck, tap Export, then Paste here. Shows what you own and the wildcards needed."
-            setTextColor(Color.DKGRAY); setPadding(0, pad / 2, 0, pad / 2)
+            setTextColor(context.secondaryText()); setPadding(0, pad / 2, 0, pad / 2)
         })
         input = EditText(this).apply {
             id = 4242; hint = "4 Llanowar Elves (FDN) 227\n…"; minLines = 5; maxLines = 10; textSize = 13f; typeface = Typeface.MONOSPACE

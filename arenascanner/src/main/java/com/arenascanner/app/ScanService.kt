@@ -651,7 +651,7 @@ class ScanService : Service() {
         val wm = getSystemService(WindowManager::class.java)
         val d = resources.displayMetrics.density
         val p = panel ?: TextView(this).apply {
-            textSize = 15f
+            textSize = Gemma.prefs(this@ScanService).getFloat("panel_text", 15f)
             setLineSpacing(0f, 1.15f)
             setTextColor(Color.WHITE)
             val pad = (14 * d).toInt()

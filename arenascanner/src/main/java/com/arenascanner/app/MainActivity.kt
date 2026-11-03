@@ -47,6 +47,7 @@ class MainActivity : Activity() {
     companion object {
         private const val REQ_CAPTURE = 1
         private const val REQ_NOTIFY = 2
+        private const val REQ_IMPORT = 3
         private const val ARENA_PACKAGE = "com.wizards.mtga"
         private val RARITY_COLORS = mapOf("C" to "#3B3F46", "U" to "#6F8296", "R" to "#A8811C", "M" to "#C4471D", "?" to "#8A93A3")
     }
@@ -76,7 +77,7 @@ class MainActivity : Activity() {
         val help = TextView(this).apply {
             visibility = View.GONE
             textSize = 13f
-            setTextColor(Color.DKGRAY)
+            setTextColor(context.secondaryText())
             text = "How to scan: tap Start scanning and allow screen capture. In Arena, open Collection and scroll at a steady, moderate pace. " +
                 "It scans continuously as you scroll, reading each card's name and the 4 diamonds above it (filled = copies you own).\n\n" +
                 "Floating button: tap to pause or resume, long-press to stop, drag it to an empty spot so it doesn't cover cards. " +
@@ -127,6 +128,9 @@ class MainActivity : Activity() {
                 if (on && AutoScroll.instance == null) explainAccessibility()
             }
         }
+        val importButton = Button(this).apply { text = "Import CSV"; setOnClickListener {
+            @Suppress("DEPRECATION") startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_IMPORT)
+        } }
         val aboutButton = Button(this).apply { text = "About & privacy"; setOnClickListener { startActivity(Intent(this@MainActivity, AboutActivity::class.java)) } }
         val helpToggle = Button(this).apply {
             text = "How to scan ▸"
@@ -134,7 +138,7 @@ class MainActivity : Activity() {
                 text = if (help.visibility == View.GONE) "How to scan ▸" else "How to scan ▾" }
         }
         for (v in listOf(heading, status, section("Play"), coachButton, deckButton, section("Collection"), scanButton, autoScrollBox,
-            row(exportButton, csvButton), section("More"), row(dbButton, helpToggle), row(clearButton, debugButton), row(aboutButton), help, summary, row(search, rarity))) root.addView(v)
+            row(exportButton, csvButton), section("More"), row(dbButton, helpToggle), row(clearButton, debugButton), row(importButton, aboutButton), help, summary, row(search, rarity))) root.addView(v)
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         title = "Arena Scanner"
@@ -227,6 +231,7 @@ class MainActivity : Activity() {
     @Deprecated("Uses the platform activity result API to avoid extra libraries.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION") super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_IMPORT) { data?.data?.let { importCsv(it) }; return }
         if (requestCode != REQ_CAPTURE) return
         if (resultCode != RESULT_OK || data == null) { toast("Screen capture wasn't allowed, so scanning didn't start."); return }
         startForegroundService(Intent(this, ScanService::class.java)
@@ -328,6 +333,18 @@ class MainActivity : Activity() {
             .show()
     }
 
+    /** Reads a CSV saved by this app (or Count,Name[,Rarity] from elsewhere) and merges it in. */
+    private fun importCsv(uri: Uri) {
+        val text = runCatching { contentResolver.openInputStream(uri)!!.bufferedReader().readText() }.getOrNull()
+        if (text == null) { toast("Couldn't read that file."); return }
+        val rows = CollectionStore.parseCsv(text)
+        if (rows.isEmpty()) { toast("No cards found. The file needs Count and Name columns."); return }
+        val rarities = CardDb.load(this).associate { it.name.lowercase() to it.rarity }
+        val n = CollectionStore.importRows(this, rows.map { (name, count, r) -> Triple(name, count, r ?: rarities[name.lowercase()] ?: "?") })
+        refresh()
+        toast("Imported $n cards.")
+    }
+
     /** Card details: rules text from the card list, and a quick way to set how many you own. */
     private fun showCard(o: Owned) {
         val rules = CardDb.load(this).firstOrNull { it.name == o.name }?.rules?.replace(" — ", "\n")
@@ -382,7 +399,7 @@ class MainActivity : Activity() {
             val count = row.getChildAt(3) as TextView
             val plus = row.getChildAt(4) as Button
             badge.text = o.rarity
-            badge.setTextColor(Color.parseColor(RARITY_COLORS[o.rarity] ?: "#8A93A3"))
+            badge.setTextColor(rarityColor(o.rarity))
             name.text = o.name
             name.setOnClickListener { showCard(o) }
             count.text = o.copies.toString()

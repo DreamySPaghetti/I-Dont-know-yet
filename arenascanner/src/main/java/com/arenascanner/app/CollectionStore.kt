@@ -60,6 +60,47 @@ object CollectionStore {
         save(ctx)
     }
 
+    /** Adds or replaces cards from an import; imported counts count as set by hand. Returns how many. */
+    @Synchronized fun importRows(ctx: Context, rows: List<Triple<String, Int, String>>): Int {
+        load(ctx)
+        for ((name, n, r) in rows) cards[name] = Owned(name, r, n.coerceIn(1, 4), manual = true)
+        save(ctx)
+        return rows.size
+    }
+
+    /** CSV rows (name, count, rarity code or null). Needs Count and Name columns; quotes and commas in names are handled. */
+    fun parseCsv(text: String): List<Triple<String, Int, String?>> {
+        val lines = text.lines().filter { it.isNotBlank() }
+        if (lines.isEmpty()) return emptyList()
+        fun split(l: String): List<String> {
+            val out = mutableListOf<String>(); val sb = StringBuilder(); var q = false; var i = 0
+            while (i < l.length) {
+                val c = l[i]
+                when {
+                    q && c == '"' && i + 1 < l.length && l[i + 1] == '"' -> { sb.append('"'); i++ }
+                    c == '"' -> q = !q
+                    c == ',' && !q -> { out += sb.toString().trim(); sb.clear() }
+                    else -> sb.append(c)
+                }
+                i++
+            }
+            out += sb.toString().trim()
+            return out
+        }
+        val head = split(lines[0]).map { it.lowercase() }
+        val ci = head.indexOfFirst { it == "count" || it == "quantity" || it == "qty" }
+        val ni = head.indexOfFirst { it == "name" || it == "card name" || it == "card" }
+        val ri = head.indexOf("rarity")
+        if (ci < 0 || ni < 0) return emptyList()
+        val code = mapOf("mythic" to "M", "rare" to "R", "uncommon" to "U", "common" to "C", "m" to "M", "r" to "R", "u" to "U", "c" to "C")
+        return lines.drop(1).mapNotNull { l ->
+            val f = split(l)
+            val n = f.getOrNull(ci)?.toIntOrNull() ?: return@mapNotNull null
+            val name = f.getOrNull(ni)?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            if (n <= 0) null else Triple(name, n, f.getOrNull(ri)?.lowercase()?.let { code[it] })
+        }
+    }
+
     /** Clears everything, keeping one backup so it can be undone. */
     @Synchronized fun clear(ctx: Context) {
         load(ctx)
