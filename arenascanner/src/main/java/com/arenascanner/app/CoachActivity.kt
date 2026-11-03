@@ -78,6 +78,11 @@ class CoachActivity : Activity() {
         col.addView(rulesStatus); col.addView(rulesBtn)
 
         step3 = label("", 16f, true); col.addView(step3)
+        col.addView(android.widget.CheckBox(this).apply {
+            text = "Auto advice: ask by itself at my main phase, attacks, blocks and mulligan"
+            isChecked = Gemma.prefs(context).getBoolean("auto_advice", true)
+            setOnCheckedChangeListener { _, on -> Gemma.prefs(context).edit().putBoolean("auto_advice", on).apply() }
+        })
         startBtn = Button(this).apply {
             textSize = 18f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#6A3FB5"))
             minHeight = (56 * dp).toInt(); setOnClickListener { toggleCoach() }

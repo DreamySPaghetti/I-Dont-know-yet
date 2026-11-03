@@ -59,6 +59,28 @@ class CoachPromptTest {
         assertTrue(CoachPrompt.build(b).contains("- Basic lands: Plains x1"))
     }
 
+    @Test fun highlightedHandCardsArePlayable() {
+        // From a real main-phase screenshot: Plains in hand not outlined (land already played), Seam Rip outlined.
+        val b = CoachPrompt.analyze(listOf(
+            Seen("Plains", 0.25f, 0.76f, 0.013f, glow = 0f),
+            Seen("Seam Rip", 0.40f, 0.70f, 0.013f, glow = 0.29f),
+            Seen("To Combat", 0.88f, 0.98f, 0.015f),
+        ), match)
+        assertEquals(setOf("Seam Rip"), b.playable)
+        val p = CoachPrompt.build(b)
+        assertTrue(p.contains("Seam Rip [PLAYABLE NOW]"))
+        assertTrue(p.contains("already played a land this turn"))
+        assertTrue(p.contains("Only suggest cards marked [PLAYABLE NOW]"))
+    }
+
+    @Test fun glowFractionCountsBrightBlue() {
+        val blue = 0x10C8FF
+        val all = CoachPrompt.glowFraction({ _, _ -> blue }, 400, 400, 100, 200, 200, 216)
+        val none = CoachPrompt.glowFraction({ _, _ -> 0x3A4050 }, 400, 400, 100, 200, 200, 216)
+        assertEquals(1f, all, 0.001f)
+        assertEquals(0f, none, 0.001f)
+    }
+
     @Test fun typeLineIsNotACard() {
         val b = CoachPrompt.analyze(listOf(Seen("Basic Land - Plains", 0.3f, 0.8f, 0.012f)), match)
         assertTrue(b.cards.isEmpty())

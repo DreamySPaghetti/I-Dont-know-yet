@@ -94,6 +94,10 @@ class ScanService : Service() {
     @Volatile private var coachReady = false
     @Volatile private var coachBusy = false
     private var panel: TextView? = null
+    // Auto advice: ask by itself when Arena reaches a decision (my main phase, blocks, attacks, mulligan).
+    private var autoAdvice = true
+    private var lastAutoPhase: CoachPrompt.Phase? = null
+    @Volatile private var polling = false
     private var panelBox: android.widget.LinearLayout? = null
     private var actions: android.widget.LinearLayout? = null
     private var fixBox: android.view.View? = null
@@ -372,11 +376,37 @@ class ScanService : Service() {
                 g.load()
                 gemma = g
                 coachReady = true
-                main.post { overlay?.text = "Coach"; showPanel("Coach ready (${g.backendName}). On your turn, tap Coach.") }
+                autoAdvice = Gemma.prefs(this).getBoolean("auto_advice", true)
+                main.post {
+                    overlay?.text = "Coach"
+                    showPanel("Coach ready (${g.backendName}). " +
+                        if (autoAdvice) "Advice appears by itself on your turn; tap Coach to ask any time." else "On your turn, tap Coach.")
+                }
+                if (autoAdvice) bg.postDelayed(::poll, 2000)
             } catch (t: Throwable) {
                 main.post { showPanel("Couldn't start Gemma: ${t.message}\nLong-press the button to close."); overlay?.text = "Error" }
             }
         }
+    }
+
+    /** Every 1.5 s: read Arena's step from the screen text; when a new decision point starts, ask automatically. */
+    private fun poll() {
+        if (!running) return
+        val img = latest
+        if (img != null && !coachBusy && !polling) {
+            polling = true
+            val bmp = toBitmap(img)
+            recognizer.process(InputImage.fromBitmap(bmp, 0))
+                .addOnSuccessListener { t ->
+                    val phase = CoachPrompt.phaseOf(t.textBlocks.flatMap { b -> b.lines.map { it.text } })
+                    val decision = phase in setOf(CoachPrompt.Phase.MAIN1, CoachPrompt.Phase.BLOCK, CoachPrompt.Phase.ATTACK, CoachPrompt.Phase.MULLIGAN)
+                    if (decision && phase != lastAutoPhase && !coachBusy && fixBox == null) coachTap()
+                    // Remember the step; a different step (e.g. the opponent's turn) re-arms it for next time.
+                    if (phase != CoachPrompt.Phase.UNKNOWN) lastAutoPhase = phase
+                }
+                .addOnCompleteListener { polling = false }
+        }
+        bg.postDelayed(::poll, 1500)
     }
 
     /** Coach button tapped: hide the overlay, grab a clean frame, read it, ask Gemma. */
@@ -402,9 +432,15 @@ class ScanService : Service() {
     private fun readBoard(bmp: Bitmap) {
         recognizer.process(InputImage.fromBitmap(bmp, 0))
             .addOnSuccessListener { text ->
+                val w = bmp.width; val h = bmp.height
+                val px = IntArray(w * h).also { bmp.getPixels(it, 0, w, 0, 0, w, h) }
+                val rgb = { x: Int, y: Int -> px[y * w + x] and 0xFFFFFF }
                 val seen = text.textBlocks.flatMap { it.lines }.mapNotNull { l ->
                     val r = l.boundingBox ?: return@mapNotNull null
-                    CoachPrompt.Seen(l.text, r.exactCenterX() / bmp.width, r.exactCenterY() / bmp.height, r.height().toFloat() / bmp.height)
+                    val cy = r.exactCenterY() / h
+                    // Only hand cards (bottom of my side) get the "playable" outline check.
+                    val glow = if (cy > 0.62f) CoachPrompt.glowFraction(rgb, w, h, r.left, r.top, r.right, r.bottom) else -1f
+                    CoachPrompt.Seen(l.text, r.exactCenterX() / w, cy, r.height().toFloat() / h, glow)
                 }
                 val board = CoachPrompt.analyze(seen) { matcher.match(it) }
                 val cards = board.cards

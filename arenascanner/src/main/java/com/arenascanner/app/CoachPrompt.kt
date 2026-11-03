@@ -54,13 +54,42 @@ object CoachPrompt {
     enum class Zone(val label: String) { HAND("Your hand"), MINE("Your battlefield"), THEIRS("Opponent's battlefield"), OPENING("Opening hand") }
 
     /** One line of text read from the screen; positions and height are fractions of the screen size. */
-    data class Seen(val text: String, val cx: Float, val cy: Float, val h: Float)
+    data class Seen(val text: String, val cx: Float, val cy: Float, val h: Float, val glow: Float = -1f)
+
+    /** Arena outlines cards you can play right now in bright blue; measured on real screenshots (≥17 % vs ≤4 %). */
+    const val GLOW_MIN = 0.10f
+
+    /**
+     * Share of bright-blue pixels in a band above a card name (where Arena draws its "playable" outline).
+     * [rgb] returns a packed 0xRRGGBB pixel; the name box is in pixels.
+     */
+    fun glowFraction(rgb: (Int, Int) -> Int, w: Int, h: Int, left: Int, top: Int, right: Int, bottom: Int): Float {
+        val lh = maxOf(12, bottom - top)
+        val y0 = maxOf(0, top - 3 * lh); val y1 = maxOf(0, top)
+        val x0 = maxOf(0, left - 2 * lh); val x1 = minOf(w, right + 3 * lh)
+        var n = 0; var hit = 0
+        var y = y0
+        while (y < y1) {
+            var x = x0
+            while (x < x1) {
+                val p = rgb(x, y)
+                val r = (p shr 16) and 0xFF; val g = (p shr 8) and 0xFF; val b = p and 0xFF
+                if (b > 200 && g > 150 && r < 140 && b - r > 80) hit++
+                n++; x += 2
+            }
+            y += 2
+        }
+        return if (n == 0) 0f else hit.toFloat() / n
+    }
 
     /** What the coach knows about the board, worked out from the text on screen. */
     data class Board(
         val cards: List<Pair<Card, Zone>>,
         val lands: Map<Zone, Map<String, Int>>,
         val creatures: Map<Zone, List<String>>,
+        /** Names of hand cards Arena highlights as playable now; null when it couldn't be measured. */
+        val playable: Set<String>? = null,
+        val notPlayable: Set<String> = emptySet(),
         val lifeYou: Int?,
         val lifeOpp: Int?,
         val phase: Phase,
@@ -121,10 +150,18 @@ object CoachPrompt {
         var lifeYou: Int? = null
         var lifeOpp: Int? = null
         val other = mutableListOf<String>()
+        val playable = mutableSetOf<String>()
+        val notPlayable = mutableSetOf<String>()
+        var measured = false
         for (s in lines) {
             val t = s.text.trim()
             val norm = Matcher.normalize(t)
             val zone = zoneOf(s, mull)
+            if (zone == Zone.HAND && s.glow >= 0f && (norm in BASIC || match(t) != null)) {
+                measured = true
+                val name = if (norm in BASIC) t.replaceFirstChar { it.uppercase() } else match(t)!!.name
+                if (s.glow >= GLOW_MIN) playable += name else notPlayable += name
+            }
             when {
                 norm in BASIC -> lands.getOrPut(zone) { linkedMapOf() }.merge(t.replaceFirstChar { it.uppercase() }, 1, Int::plus)
                 PT.matches(t) && s.cy < 0.8f -> creatures.getOrPut(if (s.cy < 0.44f) Zone.THEIRS else Zone.MINE) { mutableListOf() }.add(t)
@@ -136,7 +173,8 @@ object CoachPrompt {
                 }
             }
         }
-        return Board(cards, lands, creatures, lifeYou, lifeOpp, phase, other)
+        return Board(cards, lands, creatures, lifeYou, lifeOpp, phase, other,
+            if (measured) playable else null, notPlayable - playable)
     }
 
     /** One-line board description, saved with a lesson so it can be shown back to the model. */
@@ -170,16 +208,26 @@ object CoachPrompt {
             sb.append(zone.label).append(":\n")
             for ((c, _) in inZone) {
                 sb.append("- ").append(c.name)
+                if (zone == Zone.HAND && board.playable != null)
+                    sb.append(if (c.name in board.playable) " [PLAYABLE NOW]" else " [can't play now]")
                 if (c.rules.isNotEmpty()) sb.append(": ").append(c.rules.take(320))
                 sb.append('\n')
             }
             if (lands.isNotEmpty()) {
                 val what = lands.entries.joinToString(", ") { "${it.key} x${it.value}" }
-                if (zone == Zone.HAND || zone == Zone.OPENING) sb.append("- Basic lands: ").append(what).append('\n')
+                if (zone == Zone.HAND && board.playable != null) {
+                    val can = lands.keys.any { it in board.playable }
+                    sb.append("- Basic lands: ").append(what)
+                        .append(if (can) " [PLAYABLE NOW: I haven't played a land this turn]" else " [can't play now: I already played a land this turn]").append('\n')
+                } else if (zone == Zone.HAND || zone == Zone.OPENING) sb.append("- Basic lands: ").append(what).append('\n')
                 else sb.append("- Lands already in play (at least): ").append(what).append(" (stacked lands may hide more)\n")
             }
             if (pts.isNotEmpty()) sb.append("- Creatures' power/toughness shown: ").append(pts.joinToString(", ")).append('\n')
             sb.append('\n')
+        }
+        if (board.playable != null && board.phase != Phase.BLOCK && board.phase != Phase.MULLIGAN) {
+            sb.append(if (board.playable.isEmpty()) "Arena shows nothing in my hand is playable right now. Don't suggest casting or playing cards from my hand.\n\n"
+                else "Arena highlights the cards I can play right now. Only suggest cards marked [PLAYABLE NOW].\n\n")
         }
         if (board.lands[Zone.MINE].isNullOrEmpty().not())
             sb.append("Lands already on my battlefield are in play: don't tell me to play them again. Only one land can be played per turn.\n\n")
