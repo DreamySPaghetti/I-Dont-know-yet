@@ -233,8 +233,8 @@ class ScanService : Service() {
         }
         if (busy) return
         val waited = now - swipeEndedAt
-        if (waited < 200) return
-        if (scansAfterSwipe < 1 && waited < 1500) return
+        if (waited < if (speed.moveMs <= 340) 90 else 200) return
+        if (scansAfterSwipe < 1 && waited < 1100) return
         val fp = fingerprint(img)
         beforeSwipe?.let { stuck = if (Settle.diff(it, fp) < 2.0) stuck + 1 else 0 }
         if (stuck >= 3) {
