@@ -53,6 +53,10 @@ class ScanService : Service() {
         const val ACTION_TOGGLE = "toggle"
         private const val CHANNEL = "scan"
         private const val TICK_MS = 100L
+        /** Each steady drag covers this much of the screen width before the finger resets. */
+        private const val DRAG_SPAN = 0.76f
+        /** Brief stop at the end of a drag so Arena doesn't fling the list past what was read. */
+        private const val HOLD_MS = 60L
         private const val DEBUG_EVERY_MS = 5000L
         @Volatile var running = false
         fun debugFile(ctx: android.content.Context) = File(ctx.filesDir, "last_scan.jpg")
@@ -210,8 +214,8 @@ class ScanService : Service() {
     }
 
     /**
-     * Swipe, wait until a scan has read the new position (or 1.5 s if nothing changed), swipe again.
-     * Three swipes in a row that don't move the screen = end of the list.
+     * Steady scrolling: one long, slow, constant-speed drag across the screen, then straight into the next,
+     * scanning the whole time. Two drags in a row that don't move the screen = end of the list.
      */
     private fun autoScroll(img: Image) {
         if (!scrollOn || paused) return
@@ -228,16 +232,15 @@ class ScanService : Service() {
         }
         if (swiping) {
             // Watchdog: a gesture whose callback never came back mustn't stop scrolling for good.
-            if (now - swipeStartedAt > speed.moveMs + speed.holdMs + 2500) { swiping = false; swipeEndedAt = now }
+            if (now - swipeStartedAt > speed.dragMs(DRAG_SPAN) + HOLD_MS + 2500) { swiping = false; swipeEndedAt = now }
             return
         }
         if (busy) return
         val waited = now - swipeEndedAt
-        if (waited < if (speed.moveMs <= 340) 90 else 200) return
-        if (scansAfterSwipe < 1 && waited < 1100) return
+        if (waited < 40) return
         val fp = fingerprint(img)
         beforeSwipe?.let { stuck = if (Settle.diff(it, fp) < 2.0) stuck + 1 else 0 }
-        if (stuck >= 3) {
+        if (stuck >= 2) {
             scrollOn = false
             main.post {
                 paused = true; overlay?.let { style(it); it.text = "Done" }
@@ -262,10 +265,10 @@ class ScanService : Service() {
         scansAfterSwipe = 0
         // Right to left along the gap between the two card rows (measured from a recording).
         val y = height * 0.585f
-        val x1 = width * 0.80f
-        val x2 = x1 - width * speed.step
+        val x1 = width * 0.88f
+        val x2 = x1 - width * DRAG_SPAN
         main.post {
-            svc.swipe(x1, y, x2, speed.moveMs, speed.holdMs) { _ ->
+            svc.swipe(x1, y, x2, speed.dragMs(DRAG_SPAN), HOLD_MS) { _ ->
                 swipeEndedAt = System.currentTimeMillis()
                 swiping = false
             }
