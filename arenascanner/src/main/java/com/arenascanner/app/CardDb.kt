@@ -36,7 +36,8 @@ object CardDb {
             val faces = o.optJSONArray("faces")
             Card(o.getString("name"), o.getString("rarity"),
                 if (faces == null) emptyList() else (0 until faces.length()).map(faces::getString),
-                o.optString("rules"))
+                o.optString("rules"),
+                o.optString("legal").split(',').filter { it.isNotEmpty() }.toSet())
         }
         cached = list
         return list
@@ -58,7 +59,7 @@ object CardDb {
             if (url != null) Thread.sleep(600)
         }
         val arr = JSONArray()
-        for (c in out) arr.put(JSONObject().put("name", c.name).put("rarity", c.rarity).put("faces", JSONArray(c.faces)).put("rules", c.rules))
+        for (c in out) arr.put(JSONObject().put("name", c.name).put("rarity", c.rarity).put("faces", JSONArray(c.faces)).put("rules", c.rules).put("legal", c.legal.joinToString(",")))
         file(ctx).writeText(arr.toString())
         cached = out
         return out
@@ -71,11 +72,16 @@ object CardDb {
         // Arena lists double-faced cards by their front face.
         // Alchemy rebalanced cards are "A-Name" on Scryfall but show as "Name" in Arena.
         val name = (if (faces.isNotEmpty()) faces[0] else full).removePrefix("A-")
-        return Card(name, rarityCode(o.optString("rarity")), faces, rulesOf(o))
+        val leg = o.optJSONObject("legalities")
+        val legal = leg?.keys()?.asSequence()?.filter { leg.optString(it) == "legal" || leg.optString(it) == "restricted" }?.toSet().orEmpty()
+        return Card(name, rarityCode(o.optString("rarity")), faces, rulesOf(o), legal)
     }
 
     /** True once the saved list includes rules text. */
     fun hasRules(ctx: Context) = load(ctx).any { it.rules.isNotEmpty() }
+
+    /** Card lists saved before format legality was stored don't have it. */
+    fun hasLegality(ctx: Context) = load(ctx).any { it.legal.isNotEmpty() }
 
     /** "{1}{W} — Creature — Cat — Lifelink — 2/2"; double-faced cards list each face, separated by " // ". */
     private fun rulesOf(o: JSONObject): String {

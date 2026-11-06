@@ -138,10 +138,13 @@ object CollectionStore {
     private fun backup(ctx: Context) = File(ctx.filesDir, "collection_backup.json")
 
     /** Spreadsheet-ready CSV: Count, Name, Rarity, Set by hand. Names with commas are quoted. */
-    @Synchronized fun exportCsv(ctx: Context): String {
+    @Synchronized fun exportCsv(ctx: Context): String = csvOf(all(ctx))
+
+    /** CSV for any list of cards (used by the format export too). */
+    fun csvOf(cards: List<Owned>): String {
         val rarity = mapOf("C" to "Common", "U" to "Uncommon", "R" to "Rare", "M" to "Mythic")
         fun q(s: String) = if (s.any { it == ',' || it == '"' }) "\"" + s.replace("\"", "\"\"") + "\"" else s
-        val rows = all(ctx).map { "${it.copies},${q(it.name)},${rarity[it.rarity] ?: "Unknown"},${if (it.manual) "yes" else "no"}" }
+        val rows = cards.map { "${it.copies},${q(it.name)},${rarity[it.rarity] ?: "Unknown"},${if (it.manual) "yes" else "no"}" }
         return (listOf("Count,Name,Rarity,Set by hand") + rows).joinToString("\r\n") + "\r\n"
     }
 

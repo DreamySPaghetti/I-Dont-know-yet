@@ -115,6 +115,7 @@ class MainActivity : Activity() {
             titleText("Decks"),
             mutedText("Paste a deck from Arena to see what you're missing and the wildcards it costs."),
             tonalButton("Deck check") { startActivity(Intent(this, DeckCheckActivity::class.java)) },
+            tonalButton("Export by format (Scryfall legality)") { startActivity(Intent(this, FormatExportActivity::class.java)) },
         ))
 
         // Settings
